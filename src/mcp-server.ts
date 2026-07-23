@@ -19,7 +19,7 @@ import { validateToolArguments } from "./tools/toolArgumentValidation.js";
 const permissions = process.env.MCP_PERMISSIONS || process.env.MCP_CONFIG || "";
 const categories = process.env.MCP_CATEGORIES || "";
 const SERVER_NAME = "mysql-mcp-server";
-const SERVER_VERSION = "1.43.1";
+const SERVER_VERSION = "1.43.2";
 
 // Declare the MySQL MCP instance (will be initialized in main())
 let mysqlMCP: MySQLMCP;

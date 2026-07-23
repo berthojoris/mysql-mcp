@@ -1,7 +1,7 @@
 {
   "name": "mysql-mcp",
   "description": "A Model Context Protocol for MySQL database interaction",
-  "version": "1.43.0",
+  "version": "1.43.2",
   "tools": [
     {
       "name": "list_databases",

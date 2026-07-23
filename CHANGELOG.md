@@ -5,6 +5,12 @@ All notable changes to the MySQL MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.43.2] - 2026-07-23
+
+### Changed
+- Version bump to `1.43.2` for npm publish.
+- Synchronized version across `package.json`, `src/mcp-server.ts`, `DOCUMENTATIONS.md`, `README.md`, and `manifest.json`.
+
 ## [1.43.1] - 2026-05-26
 
 ### Fixed
