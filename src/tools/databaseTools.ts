@@ -145,6 +145,7 @@ export class DatabaseTools {
         SELECT
           COLUMN_NAME as column_name,
           DATA_TYPE as data_type,
+          CHARACTER_MAXIMUM_LENGTH as character_maximum_length,
           IS_NULLABLE as is_nullable,
           COLUMN_KEY as column_key,
           COLUMN_DEFAULT as column_default,
