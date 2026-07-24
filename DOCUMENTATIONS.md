@@ -1,6 +1,6 @@
 # MySQL MCP Server - Documentation
 
-**Last Updated:** 2026-07-23 05:00:00
+**Last Updated:** 2026-07-24 08:30:00
 **Version:** 1.43.2
 **Total Tools:** 88
 
@@ -162,10 +162,9 @@ Tool enabled = (Has Permission) AND (Has Category OR No categories specified)
 - `infer_seed_rules` - Infer advanced generators from schema, samples, unique indexes, and domain presets
 - `seed_from_template` - Create reusable plan-first seed workflows for ecommerce, POS, and CRM domains
 
-### 5. Query Management (3 tools)
+### 5. Query Management (2 tools)
 - `run_select_query` - Execute SELECT queries
 - `execute_write_query` - Execute INSERT/UPDATE (DELETE requires the `delete` permission)
-- `repair_query` - Diagnose and fix SQL errors
 
 ### 6. Schema Management (4 tools)
 - `create_table` - Create new tables
@@ -177,11 +176,12 @@ Tool enabled = (Has Permission) AND (Has Category OR No categories specified)
 - `export_table_to_csv` - Export table data to CSV
 - `export_query_to_csv` - Export SELECT query results to CSV
 
-### 8. Index Management (10 tools)
+### 8. Index Management (11 tools)
 - `list_indexes` - List table indexes
 - `get_index_info` - Get index details
 - `create_index` - Create indexes
 - `drop_index` - Drop indexes
+- `analyze_index` - Analyze and update index statistics
 - `create_fulltext_index` - Create FULLTEXT indexes for text search
 - `fulltext_search` - Perform full-text search with MATCH AGAINST
 - `get_fulltext_info` - Get FULLTEXT index information
@@ -449,7 +449,6 @@ await mcp.call("commit_transaction", {});
 ### Data Protection
 
 - **PII Masking**: Automatic sensitive data redaction in exports
-- **Safe Exports**: `safe_export_table` masks emails, credit cards, passwords
 - **Query Validation**: Input validation and SQL injection prevention
 
 ### Connection Security
@@ -459,37 +458,6 @@ await mcp.call("commit_transaction", {});
 - **Error Handling**: Comprehensive error reporting
 
 ---
-
-## Migration & Schema Management
-
-### Schema Versioning
-
-Complete migration support with tracking:
-
-```javascript
-// Initialize migration tracking
-await mcp.call("init_migrations_table", {});
-
-// Create migration
-await mcp.call("create_migration", {
-  name: "add_user_avatar",
-  up_sql: "ALTER TABLE users ADD COLUMN avatar VARCHAR(255);",
-  down_sql: "ALTER TABLE users DROP COLUMN avatar;"
-});
-
-// Apply migrations
-await mcp.call("apply_migrations", { dry_run: false });
-```
-
-### Schema Comparison
-
-```javascript
-// Compare table structures
-await mcp.call("compare_table_structure", {
-  table1: "users_old",
-  table2: "users_new"
-});
-```
 
 ---
 
