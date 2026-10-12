@@ -1,7 +1,7 @@
 # MySQL MCP Server - Documentation
 
-**Last Updated:** 2026-07-24 08:30:00
-**Version:** 1.43.2
+**Last Updated:** 2026-10-12 20:08:58
+**Version:** 1.43.3
 **Total Tools:** 88
 
 Comprehensive documentation for the MySQL MCP Server. For quick start, see [README.md](README.md).
@@ -93,6 +93,8 @@ Or execute SQL directly with automatic routing:
 
 Supported `mode` values are `auto`, `select`, `write`, and `ddl`. Set `MYSQL_MCP_CURSOR_REQUEST_FILE` to override the request file path.
 
+The bridge requires `utility` permission and the `utilities` category when category filtering is enabled. The requested destination tool must also be enabled. Disabled tools cannot be called directly or through the bridge.
+
 ---
 
 ### AI Agent Tool Discovery
@@ -125,6 +127,14 @@ For CSV exports, use `export_table_to_csv` for table-based exports and `export_q
 ```
 Tool enabled = (Has Permission) AND (Has Category OR No categories specified)
 ```
+
+CSV exports require both `utility` and `read` permissions; their category remains `utilities`.
+
+`execute_in_transaction` requires `transaction` plus the permission for the SQL operation: `read` for SELECT, `create` or `execute` for INSERT, `update` or `execute` for UPDATE, and `delete` for DELETE. DDL also requires `ddl` and an enabled `execute_ddl` tool. Transaction permission alone does not authorize reading or modifying data.
+
+Information queries such as SHOW/DESCRIBE/EXPLAIN require `list` or `read`. MySQL DDL may implicitly commit, even when called through a transaction tool.
+
+`execute_write_query` accepts only INSERT, UPDATE, and DELETE. Schema changes must use enabled DDL tools, even when `execute` and `ddl` permissions are both present.
 
 ---
 
@@ -445,6 +455,8 @@ await mcp.call("commit_transaction", {});
 - **Layer 1**: Broad permission categories (list, read, create, etc.)
 - **Layer 2**: Fine-grained tool category filtering
 - **Tool-level**: Each tool requires specific permissions
+- **Execution-time enforcement**: Tool permissions and categories are checked for every call, including file-backed Cursor requests.
+- **Mandatory SQL restrictions**: File access, account/privilege changes, dangerous server operations, comments, and multiple statements remain blocked even with `execute`. Execute permission permits advanced SELECT features, not bypassing these restrictions.
 
 ### Data Protection
 

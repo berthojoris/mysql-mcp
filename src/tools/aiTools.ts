@@ -54,7 +54,7 @@ export class AiTools {
         // 2. Validate query generally (security check)
         // We assume this tool is used by an agent who might have 'read' permissions at least.
         // If the query is unsafe (e.g. injection), we return that.
-        const validation = this.security.validateQuery(query, true); // validate with execute permission simulation to check structure
+        const validation = this.security.validateQuery(query, this.security.hasExecutePermission());
         if (!validation.valid) {
             return {
                 status: "error",

@@ -5,6 +5,19 @@ All notable changes to the MySQL MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.43.3] - 2026-10-12
+
+### Fixed
+- Enforced permission/category checks at tool execution, including the Cursor bridge and its destination tool.
+- Required SQL operation permissions inside transactions; DDL also respects the schema tool category.
+- Required both `utility` and `read` for CSV exports, including tool discovery and direct execution.
+- Restricted `execute_write_query` to INSERT/UPDATE/DELETE, preventing DDL through the write-query tool.
+- Applied mandatory dangerous SQL checks regardless of `execute` permission, including information queries and query repair.
+
+### Changed
+- Updated permission documentation and tool descriptions. Advanced SELECT features still require `execute`.
+- Synchronized version metadata and lockfile to `1.43.3`; the catalog remains at 88 tools.
+
 ## [1.43.2] - 2026-07-23
 
 ### Changed

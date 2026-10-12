@@ -190,6 +190,15 @@ export const toolCategoryMap: Record<string, ToolCategory> = {
   optimizeFulltext: ToolCategory.UTILITY,
 };
 
+const toolAdditionalPermissions: Record<string, ToolCategory[]> = {
+  exportTableToCSV: [ToolCategory.READ],
+  exportTableToCsv: [ToolCategory.READ],
+  export_table_to_csv: [ToolCategory.READ],
+  exportQueryToCSV: [ToolCategory.READ],
+  exportQueryToCsv: [ToolCategory.READ],
+  export_query_to_csv: [ToolCategory.READ],
+};
+
 /**
  * Map of tool names to their documentation categories (New Enhanced System)
  */
@@ -533,6 +542,12 @@ export class FeatureConfig {
       return false;
     }
 
+    if (!(toolAdditionalPermissions[toolName] || []).every(
+      (permission) => this.enabledLegacyCategories.has(permission),
+    )) {
+      return false;
+    }
+
     // Layer 2: Check category (documentation category) if dual-layer mode
     if (this.useDualLayer) {
       const hasCategory = docCategory
@@ -554,6 +569,16 @@ export class FeatureConfig {
 
     if (!docCategory && !legacyCategory) {
       return `Unknown tool '${toolName}'. This tool is not recognized by the MCP server.`;
+    }
+
+    const missingPermission = (toolAdditionalPermissions[toolName] || []).find(
+      (permission) => !this.enabledLegacyCategories.has(permission),
+    );
+    if (legacyCategory && this.enabledLegacyCategories.has(legacyCategory) && missingPermission) {
+      return (
+        `Permission denied: This tool also requires '${missingPermission}' permission (Layer 1). ` +
+        `Add '${missingPermission}' to the permissions argument.`
+      );
     }
 
     const isAllEnabled =

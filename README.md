@@ -4,7 +4,7 @@
 
 **A production-ready Model Context Protocol (MCP) server for MySQL database integration with AI agents**
 
-**Last Updated:** 2026-07-24 08:30:00
+**Last Updated:** 2026-10-12 20:08:58
 
 [![npm version](https://img.shields.io/npm/v/@berthojoris/mcp-mysql-server)](https://www.npmjs.com/package/@berthojoris/mcp-mysql-server)
 [![npm downloads](https://img.shields.io/npm/dm/@berthojoris/mcp-mysql-server)](https://www.npmjs.com/package/@berthojoris/mcp-mysql-server)
@@ -270,6 +270,13 @@ Control database access with a **dual-layer filtering system** that provides bot
 | `procedure` | Stored procedures (CREATE/DROP/EXECUTE) | Procedure management |
 | `transaction` | BEGIN, COMMIT, ROLLBACK | ACID operations |
 | `utility` | Connection testing, diagnostics | Troubleshooting |
+
+**Security changes in v1.43.3:**
+- CSV exports require both `utility` and `read`; enable the `utilities` category when filtering categories.
+- SQL within a transaction requires the corresponding operation permission. `transaction` alone does not permit reads or writes.
+- `execute_write_query` accepts only INSERT/UPDATE/DELETE. DDL requires enabled DDL tools.
+- Disabled tools cannot be called directly or through the Cursor bridge. The bridge requires `utility` and an enabled destination tool.
+- `execute` does not bypass mandatory SQL safety restrictions, including file access and account/privilege changes.
 
 Common configuration examples are documented in **[DOCUMENTATIONS.md → Category Filtering System](DOCUMENTATIONS.md#🆕-category-filtering-system)**.
 

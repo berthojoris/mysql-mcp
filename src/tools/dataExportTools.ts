@@ -120,6 +120,11 @@ export class DataExportTools {
     error?: string;
   }> {
     try {
+      const readPermission = this.security.validateQueryPermissions("SELECT");
+      if (!readPermission.valid) {
+        return { status: "error", error: readPermission.error };
+      }
+
       const {
         table_name,
         filters = [],
@@ -281,6 +286,11 @@ export class DataExportTools {
     error?: string;
   }> {
     try {
+      const readPermission = this.security.validateQueryPermissions("SELECT");
+      if (!readPermission.valid) {
+        return { status: "error", error: readPermission.error };
+      }
+
       const {
         query,
         params = [],

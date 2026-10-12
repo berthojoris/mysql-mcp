@@ -10,7 +10,7 @@ import {
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { MySQLMCP } from "./index.js";
-import { getEnabledTools } from "./tools/toolRegistry.js";
+import { getEnabledTools, isToolEnabled } from "./tools/toolRegistry.js";
 import { validateToolArguments } from "./tools/toolArgumentValidation.js";
 
 // Get permissions and categories from environment variables (set by bin/mcp-mysql.js)
@@ -19,7 +19,7 @@ import { validateToolArguments } from "./tools/toolArgumentValidation.js";
 const permissions = process.env.MCP_PERMISSIONS || process.env.MCP_CONFIG || "";
 const categories = process.env.MCP_CATEGORIES || "";
 const SERVER_NAME = "mysql-mcp-server";
-const SERVER_VERSION = "1.43.2";
+const SERVER_VERSION = "1.43.3";
 
 // Declare the MySQL MCP instance (will be initialized in main())
 let mysqlMCP: MySQLMCP;
@@ -1097,7 +1097,7 @@ const TOOLS: Tool[] = [
   {
     name: "cursor_execute_request",
     description:
-      "Cursor compatibility bridge for clients that can call MCP tools but cannot send arguments. Reads .cursor/mysql-mcp-request.json (or MYSQL_MCP_CURSOR_REQUEST_FILE) and dispatches to the requested MySQL MCP tool. The request file supports {\"tool\":\"execute_ddl\",\"arguments\":{\"query\":\"DROP TABLE IF EXISTS t;\"}} or direct SQL with {\"query\":\"...\",\"mode\":\"auto\"}.",
+      "Cursor compatibility bridge for clients that can call MCP tools but cannot send arguments. Requires utility permission and an enabled destination tool. Reads .cursor/mysql-mcp-request.json (or MYSQL_MCP_CURSOR_REQUEST_FILE) and dispatches to the requested MySQL MCP tool. The request file supports {\"tool\":\"execute_ddl\",\"arguments\":{\"query\":\"DROP TABLE IF EXISTS t;\"}} or direct SQL with {\"query\":\"...\",\"mode\":\"auto\"}.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -1207,7 +1207,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: "execute_in_transaction",
-    description: "Executes a SQL query within an existing transaction context. The query becomes part of the transaction and will be committed or rolled back with it. Use after begin_transaction.",
+    description: "Executes a SQL query within an existing transaction context. Requires transaction plus the SQL operation permission: read for SELECT, create or execute for INSERT, update or execute for UPDATE, delete for DELETE. DDL requires an enabled execute_ddl tool and may implicitly commit. Use after begin_transaction.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1379,7 +1379,7 @@ const TOOLS: Tool[] = [
   {
     name: "export_table_to_csv",
     description:
-      "📄 Exports table data to CSV format with filtering, pagination, and sorting. For sensitive data, use safe_export_table instead which includes automatic data masking.",
+      "📄 Exports table data to CSV format with filtering, pagination, and sorting. Requires both utility and read permissions.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1436,7 +1436,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: "export_query_to_csv",
-    description: "📄 Executes a SELECT query and exports results to CSV format. Supports complex queries with JOINs and aggregations. For sensitive data, consider using safe_export_table or adding manual data masking.",
+    description: "📄 Executes a SELECT query and exports results to CSV format. Requires both utility and read permissions. Supports complex queries with JOINs and aggregations.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2415,6 +2415,16 @@ const getRuntimeToolCatalog = () => {
   };
 };
 
+const assertToolEnabled = (toolName: string): void => {
+  const tool = TOOLS.find((candidate) => candidate.name === toolName);
+  if (!tool) {
+    throw new Error(`Unknown tool: ${toolName}`);
+  }
+  if (!isToolEnabled(mysqlMCP, tool)) {
+    throw new Error(`Permission denied: Tool '${toolName}' is disabled by the active permissions or categories.`);
+  }
+};
+
 const getCursorRequestFilePath = (): string => {
   const configuredPath =
     process.env.MYSQL_MCP_CURSOR_REQUEST_FILE ||
@@ -2464,6 +2474,8 @@ const executeToolByName = async (
     throw new Error("cursor_execute_request cannot dispatch to itself");
   }
 
+  assertToolEnabled(toolName);
+
   const validation = validateToolArguments(toolName, args);
   if (!validation.valid) {
     throw new Error(
@@ -2486,6 +2498,7 @@ const executeToolByName = async (
 };
 
 const executeCursorRequest = async (): Promise<any> => {
+  assertToolEnabled("cursor_execute_request");
   const requestFilePath = getCursorRequestFilePath();
 
   if (!fs.existsSync(requestFilePath)) {
@@ -2551,6 +2564,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
   }
 
   try {
+    assertToolEnabled(name);
     let result;
 
     switch (name) {

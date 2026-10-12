@@ -52,11 +52,11 @@ export class QueryTools {
         };
       }
 
-      // Check if user has execute permission to bypass dangerous keyword checks
+      // Execute permission allows advanced SELECT features, not dangerous operations.
       const hasExecutePermission = this.security.hasExecutePermission();
 
       // Validate query using security layer
-      // If user has execute permission, allow advanced SQL features
+      // Mandatory safety checks apply regardless of execute permission.
       const securityQueryValidation = this.security.validateQuery(
         query,
         hasExecutePermission,
@@ -168,7 +168,7 @@ export class QueryTools {
   /**
    * Execute write operations (INSERT, UPDATE) with validation.
    * DELETE requires the separate delete permission and is validated in the security layer.
-   * Note: DDL operations are blocked by the security layer for safety
+   * DDL and information queries must use their dedicated tools.
    */
   async executeWriteQuery(queryParams: { query: string; params?: any[] }): Promise<{
     status: string;
@@ -188,7 +188,7 @@ export class QueryTools {
       }
 
       // Validate query using security layer
-      // Pass true for bypassDangerousCheck since this is executeWriteQuery (requires 'execute' permission)
+      // Execute permission does not bypass mandatory safety restrictions.
       const securityQueryValidation = this.security.validateQuery(query, true);
       if (!securityQueryValidation.valid) {
         return {
@@ -197,12 +197,11 @@ export class QueryTools {
         };
       }
 
-      // Ensure it's not a SELECT query (use runSelectQuery for that)
-      if (securityQueryValidation.queryType === "SELECT") {
+      if (!["INSERT", "UPDATE", "DELETE"].includes(securityQueryValidation.queryType || "")) {
         return {
           status: "error",
           error:
-            "SELECT queries should use run_select_query method instead of execute_write_query.",
+            "Only INSERT, UPDATE, and DELETE are allowed with execute_write_query. Use run_select_query for SELECT and execute_ddl for schema changes.",
         };
       }
 

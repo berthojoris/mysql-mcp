@@ -1,7 +1,7 @@
 {
   "name": "mysql-mcp",
   "description": "A Model Context Protocol for MySQL database interaction",
-  "version": "1.43.2",
+  "version": "1.43.3",
   "tools": [
     {
       "name": "list_databases",
@@ -1383,7 +1383,7 @@
     },
     {
       "name": "cursor_execute_request",
-      "description": "Cursor compatibility bridge for clients that can call MCP tools but cannot send arguments. Reads .cursor/mysql-mcp-request.json (or MYSQL_MCP_CURSOR_REQUEST_FILE) and dispatches to the requested MySQL MCP tool. The request file supports {\"tool\":\"execute_ddl\",\"arguments\":{\"query\":\"DROP TABLE IF EXISTS t;\"}} or direct SQL with {\"query\":\"...\",\"mode\":\"auto\"}.",
+      "description": "Cursor compatibility bridge for clients that can call MCP tools but cannot send arguments. Requires utility permission and an enabled destination tool. Reads .cursor/mysql-mcp-request.json (or MYSQL_MCP_CURSOR_REQUEST_FILE) and dispatches to the requested MySQL MCP tool. The request file supports {\"tool\":\"execute_ddl\",\"arguments\":{\"query\":\"DROP TABLE IF EXISTS t;\"}} or direct SQL with {\"query\":\"...\",\"mode\":\"auto\"}.",
       "input_schema": {
         "type": "object",
         "properties": {}
@@ -1517,7 +1517,7 @@
     },
     {
       "name": "execute_in_transaction",
-      "description": "Executes a SQL query within an existing transaction context. The query becomes part of the transaction and will be committed or rolled back with it. Use after begin_transaction.",
+      "description": "Executes a SQL query within an existing transaction context. Requires transaction plus the SQL operation permission: read for SELECT, create or execute for INSERT, update or execute for UPDATE, delete for DELETE. DDL requires an enabled execute_ddl tool and may implicitly commit. Use after begin_transaction.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -1726,7 +1726,7 @@
     },
     {
       "name": "export_table_to_csv",
-      "description": "📄 Exports table data to CSV format with filtering, pagination, and sorting. For sensitive data, use safe_export_table instead which includes automatic data masking.",
+      "description": "📄 Exports table data to CSV format with filtering, pagination, and sorting. Requires both utility and read permissions.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -1811,7 +1811,7 @@
     },
     {
       "name": "export_query_to_csv",
-      "description": "📄 Executes a SELECT query and exports results to CSV format. Supports complex queries with JOINs and aggregations. For sensitive data, consider using safe_export_table or adding manual data masking.",
+      "description": "📄 Executes a SELECT query and exports results to CSV format. Requires both utility and read permissions. Supports complex queries with JOINs and aggregations.",
       "input_schema": {
         "type": "object",
         "properties": {

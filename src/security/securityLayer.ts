@@ -55,10 +55,37 @@ export class SecurityLayer {
    * Check if a query is a read-only information query (SHOW, DESCRIBE, EXPLAIN, etc.)
    */
   private isInformationQuery(query: string): boolean {
-    const trimmedQuery = query.trim().toUpperCase();
-    const readOnlyCommands = ["SHOW", "DESCRIBE", "DESC", "EXPLAIN", "HELP"];
+    return /^(SHOW|DESCRIBE|DESC|EXPLAIN|HELP)\b/i.test(query.trim());
+  }
 
-    return readOnlyCommands.some((cmd) => trimmedQuery.startsWith(cmd));
+  /**
+   * Authorize the SQL operation separately from the enclosing tool.
+   */
+  validateQueryPermissions(queryType: string): { valid: boolean; error?: string } {
+    if (this.ddlOperations.includes(queryType)) {
+      return this.featureConfig.isToolEnabled("executeDdl")
+        ? { valid: true }
+        : { valid: false, error: this.featureConfig.getPermissionError("executeDdl") };
+    }
+
+    const requiredPermissions: Record<string, ToolCategory[]> = {
+      SELECT: [ToolCategory.READ],
+      INSERT: [ToolCategory.CREATE, ToolCategory.EXECUTE],
+      UPDATE: [ToolCategory.UPDATE, ToolCategory.EXECUTE],
+      DELETE: [ToolCategory.DELETE],
+      INFORMATION: [ToolCategory.LIST, ToolCategory.READ],
+    };
+    const permissions = requiredPermissions[queryType];
+    if (!permissions) {
+      return { valid: false, error: "Query type not allowed" };
+    }
+    if (!permissions.some((permission) => this.featureConfig.isCategoryEnabled(permission))) {
+      return {
+        valid: false,
+        error: `Permission denied: ${queryType} requires ${permissions.map((permission) => `'${permission}'`).join(" or ")} permission.`,
+      };
+    }
+    return { valid: true };
   }
 
   /**
@@ -151,11 +178,11 @@ export class SecurityLayer {
   /**
    * Enhanced SQL query validation for security issues
    * @param query - The SQL query to validate
-   * @param bypassDangerousCheck - If true, skips dangerous keyword check (for users with 'execute' permission)
+   * @param allowAdvancedQueries - Allows advanced SELECT features, never dangerous operations
    */
   validateQuery(
     query: string,
-    bypassDangerousCheck: boolean = false,
+    allowAdvancedQueries: boolean = false,
   ): {
     valid: boolean;
     error?: string;
@@ -187,9 +214,17 @@ export class SecurityLayer {
     // Remove trailing semicolon for analysis
     const cleanQuery = trimmedQuery.replace(/;$/, "");
 
-    // Check if it's an information query (SHOW, DESCRIBE, EXPLAIN, etc.) - these are always allowed
+    const dangerousCheck = this.detectDangerousKeywords(cleanQuery, allowAdvancedQueries);
+    if (!dangerousCheck.valid) {
+      return dangerousCheck;
+    }
+
+    // Information queries still require permission and mandatory safety checks.
     if (this.isInformationQuery(trimmedQuery)) {
-      return { valid: true, queryType: "INFORMATION" };
+      const permissionCheck = this.validateQueryPermissions("INFORMATION");
+      return permissionCheck.valid
+        ? { valid: true, queryType: "INFORMATION" }
+        : permissionCheck;
     }
 
     // Enhanced query type detection with better parsing
@@ -198,13 +233,7 @@ export class SecurityLayer {
       return queryTypeResult;
     }
 
-    // Enhanced dangerous keyword detection
-    if (!bypassDangerousCheck) {
-      const dangerousCheck = this.detectDangerousKeywords(cleanQuery);
-      if (!dangerousCheck.valid) {
-        return dangerousCheck;
-      }
-
+    if (!allowAdvancedQueries) {
       // Additional checks for specific query types
       if (queryTypeResult.queryType === "SELECT") {
         const selectCheck = this.validateSelectQuery(cleanQuery);
@@ -312,25 +341,9 @@ export class SecurityLayer {
 
     for (const { type, pattern } of queryTypePatterns) {
       if (pattern.test(cleanQuery)) {
-        // Check DDL permissions
-        if (this.ddlOperations.includes(type)) {
-          if (!this.featureConfig.isCategoryEnabled(ToolCategory.DDL)) {
-            return {
-              valid: false,
-              error: `DDL operation '${type}' requires 'ddl' permission. Add 'ddl' to your permissions configuration.`,
-            };
-          }
-        }
-
-        // DELETE requires explicit delete permission (execute alone is not sufficient)
-        if (type === "DELETE") {
-          if (!this.featureConfig.isCategoryEnabled(ToolCategory.DELETE)) {
-            return {
-              valid: false,
-              error:
-                "DELETE operation requires 'delete' permission. Add 'delete' to your permissions configuration, or use delete_record / bulk_delete.",
-            };
-          }
+        const permissionCheck = this.validateQueryPermissions(type);
+        if (!permissionCheck.valid) {
+          return permissionCheck;
         }
 
         return { valid: true, queryType: type };
@@ -343,9 +356,14 @@ export class SecurityLayer {
   /**
    * Enhanced dangerous keyword detection
    */
-  private detectDangerousKeywords(cleanQuery: string): { valid: boolean; error?: string } {
+  private detectDangerousKeywords(
+    cleanQuery: string,
+    allowAdvancedQueries: boolean,
+  ): { valid: boolean; error?: string } {
     // Remove string literals to avoid false positives
-    const queryWithoutStrings = cleanQuery.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, '');
+    const queryWithoutStrings = cleanQuery
+      .replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, '')
+      .replace(/`([^`]*)`/g, "$1");
 
     for (const keyword of this.dangerousKeywords) {
       // Enhanced regex with word boundaries and case insensitivity
@@ -353,7 +371,7 @@ export class SecurityLayer {
       if (keywordRegex.test(queryWithoutStrings)) {
         return {
           valid: false,
-          error: `Dangerous keyword detected: ${keyword}. This requires 'execute' permission.`,
+          error: `Dangerous keyword detected: ${keyword}. This operation is not allowed.`,
         };
       }
     }
@@ -362,7 +380,6 @@ export class SecurityLayer {
     const dangerousPatterns = [
       /\b(LOAD_FILE|INTO\s+OUTFILE|INTO\s+DUMPFILE)\b/i,
       /\b(GRANT|REVOKE|CREATE\s+USER|DROP\s+USER|ALTER\s+USER|SET\s+PASSWORD|RENAME\s+USER)\b/i,
-      /\b(INFORMATION_SCHEMA\.|MYSQL\.|PERFORMANCE_SCHEMA\.|SYS\.)\b/i,
       /\b(SLEEP|BENCHMARK|GET_LOCK|RELEASE_LOCK)\b/i,
       /\b(PREPARE|EXECUTE|DEALLOCATE\s+PREPARE)\b/i,
       /\b(LOAD\s+DATA|SELECT\s+.*\s+INTO\s+OUTFILE|SELECT\s+.*\s+INTO\s+DUMPFILE)\b/i,
@@ -376,9 +393,16 @@ export class SecurityLayer {
       if (pattern.test(queryWithoutStrings)) {
         return {
           valid: false,
-          error: "Dangerous operation detected. This requires 'execute' permission.",
+          error: "Dangerous operation detected. This operation is not allowed.",
         };
       }
+    }
+
+    if (!allowAdvancedQueries && /\b(INFORMATION_SCHEMA\.|MYSQL\.|PERFORMANCE_SCHEMA\.|SYS\.)\b/i.test(queryWithoutStrings)) {
+      return {
+        valid: false,
+        error: "System schema queries require 'execute' permission.",
+      };
     }
 
     return { valid: true };
@@ -484,15 +508,11 @@ export class SecurityLayer {
   /**
    * Check if a query is a read-only SELECT query or information query (SHOW, DESCRIBE, etc.)
    */
-  isReadOnlyQuery(query: string, bypassDangerousCheck: boolean = false): boolean {
-    // Check if it's an information query first (SHOW, DESCRIBE, EXPLAIN, etc.)
-    if (this.isInformationQuery(query)) {
-      return true;
-    }
-
-    // Check if it's a SELECT query
-    const validation = this.validateQuery(query, bypassDangerousCheck);
-    return validation.valid && validation.queryType === "SELECT";
+  isReadOnlyQuery(query: string, allowAdvancedQueries: boolean = false): boolean {
+    const validation = this.validateQuery(query, allowAdvancedQueries);
+    return validation.valid && (
+      validation.queryType === "SELECT" || validation.queryType === "INFORMATION"
+    );
   }
 
   /**

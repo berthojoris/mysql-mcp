@@ -206,17 +206,6 @@ export class MySQLMCP {
       return { status: "error", error: check.error };
     }
 
-    // Additional security check - block DDL unless DDL permission is enabled
-    if (this.security.hasDangerousOperations(params.query)) {
-      // Check if DDL permission is enabled
-      if (!this.featureConfig.isCategoryEnabled("ddl" as any)) {
-        return {
-          status: "error",
-          error:
-            'DDL operations (DROP, TRUNCATE, ALTER, CREATE) require the "ddl" permission. Use execute_ddl tool or add "ddl" to permissions.',
-        };
-      }
-    }
     return await this.queryTools.executeWriteQuery(params);
   }
 
