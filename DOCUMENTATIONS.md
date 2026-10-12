@@ -1,7 +1,7 @@
 # MySQL MCP Server - Documentation
 
-**Last Updated:** 2026-10-12 20:39:13
-**Version:** 1.43.4
+**Last Updated:** 2026-10-12 21:16:54
+**Version:** 1.43.5
 **Total Tools:** 88
 
 Comprehensive documentation for the MySQL MCP Server. For quick start, see [README.md](README.md).
@@ -459,6 +459,10 @@ await mcp.call("commit_transaction", {});
 - **Tool-level**: Each tool requires specific permissions
 - **Execution-time enforcement**: Tool permissions and categories are checked for every call, including file-backed Cursor requests.
 - **Mandatory SQL restrictions**: File access, account/privilege changes, dangerous server operations, comments, and multiple statements remain blocked even with `execute`. Execute permission permits advanced SELECT features, not bypassing these restrictions.
+
+### Vulnerability Reporting
+
+Suspected security issues must be reported privately via GitHub Private Vulnerability Reporting; see `SECURITY.md` for the policy, reporting requirements, and disclosure timeline (added 2026-10-12 21:16:54).
 
 ### Data Protection
 

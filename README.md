@@ -4,7 +4,7 @@
 
 **A production-ready Model Context Protocol (MCP) server for MySQL database integration with AI agents**
 
-**Last Updated:** 2026-10-12 20:39:13
+**Last Updated:** 2026-10-12 21:16:54
 
 [![npm version](https://img.shields.io/npm/v/@berthojoris/mcp-mysql-server)](https://www.npmjs.com/package/@berthojoris/mcp-mysql-server)
 [![npm downloads](https://img.shields.io/npm/dm/@berthojoris/mcp-mysql-server)](https://www.npmjs.com/package/@berthojoris/mcp-mysql-server)
@@ -280,6 +280,8 @@ Control database access with a **dual-layer filtering system** that provides bot
 - `execute_write_query` accepts only INSERT/UPDATE/DELETE. DDL requires enabled DDL tools.
 - Disabled tools cannot be called directly or through the Cursor bridge. The bridge requires `utility` and an enabled destination tool.
 - `execute` does not bypass mandatory SQL safety restrictions, including file access and account/privilege changes.
+
+Report suspected security issues privately via [Private Vulnerability Reporting](https://github.com/berthojoris/mysql-mcp/security/advisories/new); see [SECURITY.md](SECURITY.md) for the policy.
 
 Common configuration examples are documented in **[DOCUMENTATIONS.md → Category Filtering System](DOCUMENTATIONS.md#🆕-category-filtering-system)**.
 

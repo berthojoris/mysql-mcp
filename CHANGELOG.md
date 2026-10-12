@@ -5,6 +5,14 @@ All notable changes to the MySQL MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.43.5] - 2026-10-12
+
+### Added
+- Added `SECURITY.md` defining supported versions, private vulnerability reporting via GitHub Private Vulnerability Reporting, report requirements, and response/disclosure expectations (acknowledgment within 7 days, coordinated disclosure).
+
+### Changed
+- Linked the security reporting policy from `README.md` and `DOCUMENTATIONS.md`, and synchronized version metadata to `1.43.5`; the catalog remains at 88 tools.
+
 ## [1.43.4] - 2026-10-12
 
 ### Fixed
