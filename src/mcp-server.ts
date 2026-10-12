@@ -19,7 +19,7 @@ import { validateToolArguments } from "./tools/toolArgumentValidation.js";
 const permissions = process.env.MCP_PERMISSIONS || process.env.MCP_CONFIG || "";
 const categories = process.env.MCP_CATEGORIES || "";
 const SERVER_NAME = "mysql-mcp-server";
-const SERVER_VERSION = "1.43.3";
+const SERVER_VERSION = "1.43.4";
 
 // Declare the MySQL MCP instance (will be initialized in main())
 let mysqlMCP: MySQLMCP;
@@ -1207,7 +1207,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: "execute_in_transaction",
-    description: "Executes a SQL query within an existing transaction context. Requires transaction plus the SQL operation permission: read for SELECT, create or execute for INSERT, update or execute for UPDATE, delete for DELETE. DDL requires an enabled execute_ddl tool and may implicitly commit. Use after begin_transaction.",
+    description: "Executes a SQL query within an existing transaction context. Requires transaction plus the SQL operation permission: read for SELECT, create or execute for INSERT, update or execute for UPDATE, delete for DELETE. DDL requires an enabled execute_ddl tool and may implicitly commit. EXPLAIN ANALYZE requires the permission of the statement it executes. Use after begin_transaction.",
     inputSchema: {
       type: "object",
       properties: {

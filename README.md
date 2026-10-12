@@ -4,7 +4,7 @@
 
 **A production-ready Model Context Protocol (MCP) server for MySQL database integration with AI agents**
 
-**Last Updated:** 2026-10-12 20:08:58
+**Last Updated:** 2026-10-12 20:39:13
 
 [![npm version](https://img.shields.io/npm/v/@berthojoris/mcp-mysql-server)](https://www.npmjs.com/package/@berthojoris/mcp-mysql-server)
 [![npm downloads](https://img.shields.io/npm/dm/@berthojoris/mcp-mysql-server)](https://www.npmjs.com/package/@berthojoris/mcp-mysql-server)
@@ -270,6 +270,9 @@ Control database access with a **dual-layer filtering system** that provides bot
 | `procedure` | Stored procedures (CREATE/DROP/EXECUTE) | Procedure management |
 | `transaction` | BEGIN, COMMIT, ROLLBACK | ACID operations |
 | `utility` | Connection testing, diagnostics | Troubleshooting |
+
+**Security changes in v1.43.4:**
+- `EXPLAIN ANALYZE` runs the statement it wraps (MySQL 8.0.18+), so it now requires that statement's permission: `delete` for DELETE, `update` or `execute` for UPDATE, `read` for SELECT. Plan-only `EXPLAIN` still needs just `list` or `read`.
 
 **Security changes in v1.43.3:**
 - CSV exports require both `utility` and `read`; enable the `utilities` category when filtering categories.

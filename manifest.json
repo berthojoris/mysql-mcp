@@ -1,7 +1,7 @@
 {
   "name": "mysql-mcp",
   "description": "A Model Context Protocol for MySQL database interaction",
-  "version": "1.43.3",
+  "version": "1.43.4",
   "tools": [
     {
       "name": "list_databases",
@@ -1517,7 +1517,7 @@
     },
     {
       "name": "execute_in_transaction",
-      "description": "Executes a SQL query within an existing transaction context. Requires transaction plus the SQL operation permission: read for SELECT, create or execute for INSERT, update or execute for UPDATE, delete for DELETE. DDL requires an enabled execute_ddl tool and may implicitly commit. Use after begin_transaction.",
+      "description": "Executes a SQL query within an existing transaction context. Requires transaction plus the SQL operation permission: read for SELECT, create or execute for INSERT, update or execute for UPDATE, delete for DELETE. DDL requires an enabled execute_ddl tool and may implicitly commit. EXPLAIN ANALYZE requires the permission of the statement it executes. Use after begin_transaction.",
       "input_schema": {
         "type": "object",
         "properties": {

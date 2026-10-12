@@ -53,6 +53,8 @@ export class SecurityLayer {
 
   /**
    * Check if a query is a read-only information query (SHOW, DESCRIBE, EXPLAIN, etc.)
+   * Note: EXPLAIN ANALYZE is handled separately by validateQuery because MySQL
+   * executes the wrapped statement, so it is authorized as the inner statement type.
    */
   private isInformationQuery(query: string): boolean {
     return /^(SHOW|DESCRIBE|DESC|EXPLAIN|HELP)\b/i.test(query.trim());
@@ -219,16 +221,26 @@ export class SecurityLayer {
       return dangerousCheck;
     }
 
+    // MySQL 8.0.18+ actually executes the statement wrapped by EXPLAIN ANALYZE,
+    // including multi-table UPDATE/DELETE. Such queries are authorized as the
+    // inner statement instead of being treated as read-only information queries.
+    const explainAnalyzeMatch = cleanQuery.match(
+      /^(?:EXPLAIN|DESCRIBE|DESC)\s+ANALYZE\s+(?:FORMAT\s*=\s*TREE\s+)?(.+)$/is,
+    );
+
     // Information queries still require permission and mandatory safety checks.
-    if (this.isInformationQuery(trimmedQuery)) {
+    if (!explainAnalyzeMatch && this.isInformationQuery(trimmedQuery)) {
       const permissionCheck = this.validateQueryPermissions("INFORMATION");
       return permissionCheck.valid
         ? { valid: true, queryType: "INFORMATION" }
         : permissionCheck;
     }
 
-    // Enhanced query type detection with better parsing
-    const queryTypeResult = this.detectQueryType(cleanQuery);
+    // Enhanced query type detection with better parsing.
+    // EXPLAIN ANALYZE is classified by the inner statement it executes.
+    const queryTypeResult = this.detectQueryType(
+      explainAnalyzeMatch ? explainAnalyzeMatch[1].trim() : cleanQuery,
+    );
     if (!queryTypeResult.valid) {
       return queryTypeResult;
     }

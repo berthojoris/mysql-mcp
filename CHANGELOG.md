@@ -5,6 +5,14 @@ All notable changes to the MySQL MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.43.4] - 2026-10-12
+
+### Fixed
+- Authorized `EXPLAIN ANALYZE` statements as the SQL operation they execute. MySQL 8.0.18+ runs the wrapped statement (including multi-table UPDATE/DELETE), so it now requires the matching permission: `read` for SELECT, `update` or `execute` for UPDATE, and `delete` for DELETE. This closes a bypass where `transaction` plus `list`/`read` could run `EXPLAIN ANALYZE UPDATE/DELETE` through `execute_in_transaction` without the corresponding write permission.
+
+### Changed
+- Updated permission documentation for `EXPLAIN ANALYZE` (plan-only `EXPLAIN` remains an information query) and synchronized version metadata to `1.43.4`; the catalog remains at 88 tools.
+
 ## [1.43.3] - 2026-10-12
 
 ### Fixed

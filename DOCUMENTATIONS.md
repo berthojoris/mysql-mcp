@@ -1,7 +1,7 @@
 # MySQL MCP Server - Documentation
 
-**Last Updated:** 2026-10-12 20:08:58
-**Version:** 1.43.3
+**Last Updated:** 2026-10-12 20:39:13
+**Version:** 1.43.4
 **Total Tools:** 88
 
 Comprehensive documentation for the MySQL MCP Server. For quick start, see [README.md](README.md).
@@ -133,6 +133,8 @@ CSV exports require both `utility` and `read` permissions; their category remain
 `execute_in_transaction` requires `transaction` plus the permission for the SQL operation: `read` for SELECT, `create` or `execute` for INSERT, `update` or `execute` for UPDATE, and `delete` for DELETE. DDL also requires `ddl` and an enabled `execute_ddl` tool. Transaction permission alone does not authorize reading or modifying data.
 
 Information queries such as SHOW/DESCRIBE/EXPLAIN require `list` or `read`. MySQL DDL may implicitly commit, even when called through a transaction tool.
+
+`EXPLAIN ANALYZE` (MySQL 8.0.18+) executes the statement it wraps, including multi-table UPDATE/DELETE, so it is authorized as that inner statement: `read` for SELECT, `update` or `execute` for UPDATE, and `delete` for DELETE. Plan-only `EXPLAIN` (without ANALYZE) remains an information query and only requires `list` or `read` (2026-10-12 20:39:13).
 
 `execute_write_query` accepts only INSERT, UPDATE, and DELETE. Schema changes must use enabled DDL tools, even when `execute` and `ddl` permissions are both present.
 
