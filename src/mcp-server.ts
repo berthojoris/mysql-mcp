@@ -12,6 +12,14 @@ import {
 import { MySQLMCP } from "./index";
 import { getEnabledTools, isToolEnabled } from "./tools/toolRegistry";
 import { validateToolArguments } from "./tools/toolArgumentValidation";
+import { withToolAnnotations } from "./tools/toolAnnotations";
+import { getRuntimeConfig, RuntimeConfig } from "./config/runtimeConfig";
+import DatabaseConnection from "./db/connection";
+import { inspectGrants } from "./security/grantInspector";
+import { AuditLogger, summarizeArguments } from "./server/auditLogger";
+import { RateLimiter } from "./server/rateLimiter";
+import { RequestContext, runWithRequestContext } from "./server/requestContext";
+import { startHttpServer } from "./server/httpServer";
 
 // Get permissions and categories from environment variables (set by bin/mcp-mysql.js)
 // Layer 1 (Permissions): MCP_PERMISSIONS or MCP_CONFIG (backward compatible)
@@ -26,9 +34,12 @@ const SERVER_VERSION: string = JSON.parse(
 
 // Declare the MySQL MCP instance (will be initialized in main())
 let mysqlMCP: MySQLMCP;
+// Created in main() from the runtime configuration
+let auditLogger = new AuditLogger("off");
+let toolRateLimiter = new RateLimiter(0);
 
-// Define all available tools with their schemas
-const TOOLS: Tool[] = [
+// Define all available tools with their schemas (annotations are added from toolAnnotations.ts)
+const TOOLS: Tool[] = withToolAnnotations([
   {
     name: "list_databases",
     description: "Lists all databases available on the MySQL server. Use this to discover what databases exist before querying them.",
@@ -2350,34 +2361,7 @@ const TOOLS: Tool[] = [
       required: ["table_name"],
     },
   },
-];
-
-// Create the MCP server
-const server = new Server(
-  {
-    name: SERVER_NAME,
-    version: SERVER_VERSION,
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  },
-);
-
-// Handle list tools request - filter tools based on permissions and categories
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const enabledTools = getEnabledTools(mysqlMCP, TOOLS);
-
-  // Log the filtering results
-  console.error(
-    `Tools available: ${enabledTools.length} of ${TOOLS.length} total tools`,
-  );
-
-  return {
-    tools: enabledTools,
-  };
-});
+]);
 
 type CursorRequestMode = "auto" | "select" | "write" | "ddl";
 
@@ -2410,6 +2394,7 @@ const getRuntimeToolCatalog = () => {
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
+      annotations: tool.annotations,
     })),
     enabledToolNames: enabledTools.map((tool) => tool.name),
     accessProfile: mysqlMCP.getAccessProfile(),
@@ -2561,22 +2546,64 @@ const executeCursorRequest = async (): Promise<any> => {
   };
 };
 
-// Handle tool call requests
-server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
-  const { name, arguments: args } = request.params;
+type ToolCallStatus = "success" | "error" | "invalid" | "denied" | "rate_limited";
 
+interface ToolCallOutcome {
+  status: ToolCallStatus;
+  error?: string;
+  result: { content: { type: "text"; text: string }[]; isError?: boolean };
+}
+
+const textResult = (text: string, isError = false): ToolCallOutcome["result"] => ({
+  content: [{ type: "text", text }],
+  ...(isError ? { isError: true } : {}),
+});
+
+/**
+ * Serialize a tool result within MCP_MAX_RESULT_BYTES. Row arrays are cut to
+ * the longest prefix that fits; other oversized results become an error.
+ */
+const serializeResult = (data: any, maxBytes: number): { text: string } | { error: string } => {
+  const text = JSON.stringify(data, null, 2);
+  if (maxBytes <= 0 || text === undefined) return { text };
+  const size = Buffer.byteLength(text);
+  if (size <= maxBytes) return { text };
+
+  if (Array.isArray(data)) {
+    const wrap = (count: number) =>
+      JSON.stringify(
+        {
+          rows: data.slice(0, count),
+          truncated: true,
+          returned_rows: count,
+          total_rows: data.length,
+          message: `Result truncated to ${count} of ${data.length} rows to stay within ${maxBytes} bytes (MCP_MAX_RESULT_BYTES). Use LIMIT/OFFSET or narrower filters to see the rest.`,
+        },
+        null,
+        2,
+      );
+    let low = 0;
+    let high = data.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (Buffer.byteLength(wrap(mid)) <= maxBytes) low = mid;
+      else high = mid - 1;
+    }
+    const truncated = wrap(low);
+    if (low > 0 && Buffer.byteLength(truncated) <= maxBytes) return { text: truncated };
+  }
+
+  return {
+    error: `Result is ${size} bytes, above the ${maxBytes}-byte limit (MCP_MAX_RESULT_BYTES). Narrow the query with LIMIT, fewer columns, or a WHERE clause.`,
+  };
+};
+
+const executeToolCall = async (name: string, args: any): Promise<ToolCallOutcome> => {
   // Validate tool arguments before execution
   const validation = validateToolArguments(name, args);
   if (!validation.valid) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Validation Error: ${validation.errors?.join(', ') || 'Invalid arguments'}`,
-        },
-      ],
-      isError: true,
-    };
+    const message = `Validation Error: ${validation.errors?.join(', ') || 'Invalid arguments'}`;
+    return { status: "invalid", error: message, result: textResult(message, true) };
   }
 
   try {
@@ -2587,15 +2614,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     if (result.status === "error") {
       let errorText = `Error: ${"error" in result ? result.error : "Unknown error"}`;
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: errorText,
-          },
-        ],
-        isError: true,
-      };
+      return { status: "error", error: errorText, result: textResult(errorText, true) };
     }
 
     // Return successful result - handle different result types
@@ -2603,7 +2622,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     if ("data" in result) {
       // Standard result with data property
       responseData = result.data;
-    } else if ("transactionId" in result) {
+    } else if ("transactionId" in result || "activeTransactions" in result) {
       // Transaction result
       responseData = {
         transactionId: result.transactionId,
@@ -2624,44 +2643,200 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
       responseData = result;
     }
 
-    // If no query log, return data as before
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(responseData, null, 2),
-        },
-      ],
-    };
+    const serialized = serializeResult(responseData, getRuntimeConfig().maxResultBytes);
+    if ("error" in serialized) {
+      return { status: "error", error: serialized.error, result: textResult(`Error: ${serialized.error}`, true) };
+    }
+    return { status: "success", result: textResult(serialized.text) };
   } catch (error: any) {
     // Check if this is a permission error
     if (error.message && error.message.includes("Permission denied")) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `❌ ${error.message}`,
-          },
-        ],
-        isError: true,
-      };
+      return { status: "denied", error: error.message, result: textResult(`❌ ${error.message}`, true) };
     }
 
     // Handle other errors with generic message
     return {
-      content: [
-        {
-          type: "text",
-          text: `Error executing tool: ${error.message}`,
-        },
-      ],
-      isError: true,
+      status: "error",
+      error: error.message,
+      result: textResult(`Error executing tool: ${error.message}`, true),
     };
   }
-});
+};
+
+// Handle tool call requests: rate limit, run with the caller's context, audit
+const handleToolCall = async (request: any, extra?: any) => {
+  const { name, arguments: args } = request.params;
+  const context: RequestContext = {
+    transport: getRuntimeConfig().transport,
+    sessionId: extra?.sessionId,
+    clientId: extra?.authInfo?.clientId,
+    clientIp: extra?.authInfo?.extra?.clientIp as string | undefined,
+  };
+  const startedAt = Date.now();
+
+  let outcome: ToolCallOutcome;
+  const rateLimitKey =
+    context.clientId && context.clientId !== "anonymous" ? context.clientId : context.clientIp || "local";
+  const retryAfterMs = toolRateLimiter.consume(rateLimitKey);
+  if (retryAfterMs > 0) {
+    const message = `Rate limit exceeded (MCP_RATE_LIMIT_PER_MINUTE). Retry in ${Math.ceil(retryAfterMs / 1000)} s.`;
+    outcome = { status: "rate_limited", error: message, result: textResult(`Error: ${message}`, true) };
+  } else {
+    outcome = await runWithRequestContext(context, () => executeToolCall(name, args));
+  }
+
+  auditLogger.log({
+    event: "tool_call",
+    transport: context.transport,
+    session: context.sessionId,
+    client: context.clientId,
+    ip: context.clientIp,
+    tool: name,
+    args: summarizeArguments(args),
+    status: outcome.status,
+    durationMs: Date.now() - startedAt,
+    ...(outcome.error ? { error: outcome.error } : {}),
+  });
+
+  return outcome.result;
+};
+
+// Build an MCP server with all handlers. Stdio uses one; HTTP creates one per session.
+const createMcpServer = (): Server => {
+  const server = new Server(
+    {
+      name: SERVER_NAME,
+      version: SERVER_VERSION,
+    },
+    {
+      capabilities: {
+        tools: {},
+      },
+    },
+  );
+
+  // Handle list tools request - filter tools based on permissions and categories
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const enabledTools = getEnabledTools(mysqlMCP, TOOLS);
+
+    // Log the filtering results
+    console.error(
+      `Tools available: ${enabledTools.length} of ${TOOLS.length} total tools`,
+    );
+
+    return {
+      tools: enabledTools,
+    };
+  });
+
+  server.setRequestHandler(CallToolRequestSchema, handleToolCall);
+
+  return server;
+};
+
+const logAccessProfile = (): void => {
+  const accessProfile = mysqlMCP.getAccessProfile();
+  console.error(`Permissions (resolved): ${accessProfile.permissions}`);
+  if (accessProfile.categories) {
+    console.error(`Categories (resolved): ${accessProfile.categories}`);
+  }
+  console.error(`Filtering mode: ${accessProfile.filteringMode}`);
+};
+
+/**
+ * Warn (or, with MCP_REQUIRE_READONLY_DB_USER, fail) when the MySQL account
+ * can do more than read.
+ */
+const checkDatabaseUserGrants = async (runtimeConfig: RuntimeConfig): Promise<void> => {
+  const required = runtimeConfig.requireReadOnlyDbUser;
+  let grants: string[];
+  try {
+    grants = await DatabaseConnection.getInstance().getCurrentUserGrants();
+  } catch (error: any) {
+    if (required) {
+      throw new Error(`MCP_REQUIRE_READONLY_DB_USER: could not read grants: ${error.message}`);
+    }
+    console.error(`Warning: could not check MySQL user grants: ${error.message}`);
+    return;
+  }
+
+  const inspection = inspectGrants(grants);
+  if (inspection.readOnly) {
+    console.error("MySQL user is read-only");
+    return;
+  }
+  const message =
+    `MySQL user has privileges beyond read-only (${inspection.writePrivileges.join(", ")}). ` +
+    "For remote AI clients, connect with a read-only account (see DOCUMENTATIONS.md).";
+  if (required) {
+    throw new Error(`MCP_REQUIRE_READONLY_DB_USER: ${message}`);
+  }
+  console.error(`Warning: ${message}`);
+};
+
+const startHttpTransport = async (runtimeConfig: RuntimeConfig): Promise<void> => {
+  const httpConfig = runtimeConfig.http;
+  mysqlMCP = new MySQLMCP(permissions, categories);
+  logAccessProfile();
+  await checkDatabaseUserGrants(runtimeConfig);
+
+  const running = await startHttpServer({
+    config: httpConfig,
+    createServer: createMcpServer,
+    auditLogger,
+    onSessionClosed: (sessionId) => {
+      const rolledBack = DatabaseConnection.getInstance().rollbackTransactionsForSession(sessionId);
+      if (rolledBack > 0) {
+        console.error(`Rolled back ${rolledBack} open transaction(s) of closed session ${sessionId}`);
+      }
+    },
+  });
+
+  if (httpConfig.auth === "none") {
+    console.error("Warning: HTTP authentication is disabled (MCP_HTTP_AUTH=none)");
+  }
+  if (httpConfig.allowedHosts.length === 0) {
+    console.error("Warning: Host header checks are off; set MCP_HTTP_ALLOWED_HOSTS or MCP_HTTP_PUBLIC_URL");
+  }
+  console.error(
+    `Protections: query timeout ${runtimeConfig.queryTimeoutMs || "off"} ms, ` +
+      `rate limit ${runtimeConfig.rateLimitPerMinute || "off"}/min, ` +
+      `max result ${runtimeConfig.maxResultBytes || "off"} bytes, audit log ${runtimeConfig.auditLog}`,
+  );
+  console.error(`MySQL MCP Server running on Streamable HTTP at ${running.url} (auth: ${httpConfig.auth})`);
+  if (httpConfig.resourceUrl) {
+    console.error(`Public endpoint: ${httpConfig.resourceUrl}`);
+  }
+
+  const shutdown = (signal: string) => {
+    console.error(`Received ${signal}, shutting down HTTP server`);
+    running
+      .close()
+      .catch(() => undefined)
+      .finally(() => {
+        auditLogger.close();
+        process.exit(0);
+      });
+  };
+  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+};
 
 // Start the server
 async function main() {
+  const runtimeConfig = getRuntimeConfig();
+  auditLogger = new AuditLogger(runtimeConfig.auditLog);
+  toolRateLimiter = new RateLimiter(runtimeConfig.rateLimitPerMinute);
+  if (toolRateLimiter.enabled) {
+    setInterval(() => toolRateLimiter.prune(), 60 * 1000).unref();
+  }
+
+  if (runtimeConfig.transport === "http") {
+    await startHttpTransport(runtimeConfig);
+    return;
+  }
+
+  const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
@@ -2670,12 +2845,11 @@ async function main() {
   mysqlMCP = new MySQLMCP(permissions, categories);
 
   // Log the effective filtering configuration to stderr
-  const accessProfile = mysqlMCP.getAccessProfile();
-  console.error(`Permissions (resolved): ${accessProfile.permissions}`);
-  if (accessProfile.categories) {
-    console.error(`Categories (resolved): ${accessProfile.categories}`);
+  logAccessProfile();
+
+  if (runtimeConfig.requireReadOnlyDbUser) {
+    await checkDatabaseUserGrants(runtimeConfig);
   }
-  console.error(`Filtering mode: ${accessProfile.filteringMode}`);
 
   // Log to stderr (not stdout, which is used for MCP protocol)
   console.error("MySQL MCP Server running on stdio");

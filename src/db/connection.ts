@@ -2,6 +2,8 @@ import mysql from "mysql2/promise";
 import { dbConfig } from "../config/config";
 import { QueryLogger } from "./queryLogger";
 import { QueryCache } from "../cache/queryCache";
+import { getRuntimeConfig } from "../config/runtimeConfig";
+import { getRequestContext } from "../server/requestContext";
 
 interface TransactionInfo {
   connection: mysql.PoolConnection;
@@ -11,7 +13,17 @@ interface TransactionInfo {
   timeout?: NodeJS.Timeout;
   queryCount: number;
   rapidQueryCount?: number;
+  /** MCP session that began the transaction; undefined over stdio */
+  ownerSessionId?: string;
 }
+
+class QueryTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Query exceeded the ${timeoutMs} ms timeout and was cancelled`);
+  }
+}
+
+const currentSessionId = (): string | undefined => getRequestContext()?.sessionId;
 
 class DatabaseConnection {
   private static instance: DatabaseConnection;
@@ -85,7 +97,7 @@ class DatabaseConnection {
 
     const startTime = Date.now();
     try {
-      const [results] = await this.pool.query(sql, params);
+      const results = await this.runPooledQuery(sql, params);
       const duration = Date.now() - startTime;
       QueryLogger.log(sql, params, duration, "success");
 
@@ -103,6 +115,98 @@ class DatabaseConnection {
       QueryLogger.log(sql, params, duration, "error", error.message);
       throw new Error(`Query execution failed: ${error}`);
     }
+  }
+
+  /**
+   * Run a statement on the pool. With MCP_QUERY_TIMEOUT_MS set, the statement
+   * runs on a dedicated pool connection so it can be cancelled server-side.
+   */
+  private async runPooledQuery(sql: string, params?: any[]): Promise<any> {
+    const timeoutMs = getRuntimeConfig().queryTimeoutMs;
+    if (timeoutMs <= 0) {
+      const [results] = await this.pool.query(sql, params);
+      return results;
+    }
+
+    const connection = await this.getConnection();
+    let timedOut = false;
+    try {
+      const outcome = await this.queryWithTimeout(connection, sql, params, timeoutMs);
+      timedOut = outcome.timedOut;
+      return outcome.results;
+    } catch (error) {
+      timedOut = error instanceof QueryTimeoutError;
+      throw error;
+    } finally {
+      // A KILL QUERY that arrives after the statement finished could interrupt
+      // the next statement on this connection, so never reuse it.
+      if (timedOut) {
+        connection.destroy();
+      } else {
+        connection.release();
+      }
+    }
+  }
+
+  /**
+   * Run a statement and cancel it with KILL QUERY once timeoutMs elapses.
+   * `timedOut` is true when the cancellation fired, even if the statement won the race.
+   */
+  private async queryWithTimeout(
+    connection: mysql.PoolConnection,
+    sql: string,
+    params: any[] | undefined,
+    timeoutMs: number,
+  ): Promise<{ results: any; timedOut: boolean }> {
+    let timedOut = false;
+    let killing: Promise<void> | undefined;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killing = this.killQuery(connection.threadId);
+    }, timeoutMs);
+
+    try {
+      const [results] = await connection.query(sql, params);
+      return { results, timedOut };
+    } catch (error) {
+      if (timedOut) throw new QueryTimeoutError(timeoutMs);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      if (killing) await killing;
+    }
+  }
+
+  /**
+   * Cancel the statement running on a connection. Uses a separate short-lived
+   * connection so it works even when the pool is exhausted.
+   */
+  private async killQuery(threadId: number | null): Promise<void> {
+    if (!threadId) return;
+    let killer: mysql.Connection | undefined;
+    try {
+      killer = await mysql.createConnection({
+        host: dbConfig.host,
+        port: dbConfig.port,
+        user: dbConfig.user,
+        password: dbConfig.password,
+      });
+      await killer.query(`KILL QUERY ${Number(threadId)}`);
+    } catch (error: any) {
+      console.error(`Failed to cancel timed-out query on thread ${threadId}: ${error.message}`);
+    } finally {
+      if (killer) {
+        await killer.end().catch(() => killer?.destroy());
+      }
+    }
+  }
+
+  /**
+   * Grants of the connected MySQL account (SHOW GRANTS FOR CURRENT_USER()).
+   */
+  public async getCurrentUserGrants(): Promise<string[]> {
+    const [rows] = await this.pool.query("SHOW GRANTS FOR CURRENT_USER()");
+    return (rows as Record<string, unknown>[]).map((row) => String(Object.values(row)[0]));
   }
 
   /**
@@ -319,8 +423,54 @@ class DatabaseConnection {
     }, this.TRANSACTION_TIMEOUT_MS);
   }
 
+  /**
+   * Transaction visible to the current caller. Transactions begun in another
+   * MCP session are reported as missing so their ids are not confirmed.
+   */
+  private getOwnedTransaction(transactionId: string): TransactionInfo | undefined {
+    const transaction = this.activeTransactions.get(transactionId);
+    if (!transaction || transaction.ownerSessionId !== currentSessionId()) {
+      return undefined;
+    }
+    return transaction;
+  }
+
+  /**
+   * Drop a transaction by destroying its connection; MySQL rolls it back.
+   */
+  private discardTransaction(transactionId: string, reason: string): void {
+    const transaction = this.activeTransactions.get(transactionId);
+    if (!transaction) return;
+    if (transaction.timeout) {
+      clearTimeout(transaction.timeout);
+    }
+    this.activeTransactions.delete(transactionId);
+    transaction.connection.destroy();
+    console.warn(`Transaction ${transactionId} rolled back: ${reason}`);
+  }
+
+  /**
+   * Roll back every transaction owned by an MCP session (session closed or expired).
+   */
+  public rollbackTransactionsForSession(sessionId: string): number {
+    let count = 0;
+    for (const [transactionId, transaction] of this.activeTransactions) {
+      if (transaction.ownerSessionId === sessionId) {
+        this.discardTransaction(transactionId, `session ${sessionId} closed`);
+        count++;
+      }
+    }
+    return count;
+  }
+
   // Transaction Management Methods
   public async beginTransaction(transactionId: string): Promise<void> {
+    if (this.activeTransactions.has(transactionId)) {
+      // Replacing the entry would leak the open transaction's connection
+      throw new Error(
+        `Failed to begin transaction: transaction ID ${transactionId} is already in use`,
+      );
+    }
     try {
       const connection = await this.getConnection();
       await connection.beginTransaction();
@@ -338,6 +488,7 @@ class DatabaseConnection {
         timeout,
         queryCount: 0,
         rapidQueryCount: 0,
+        ownerSessionId: currentSessionId(),
       });
     } catch (error) {
       throw new Error(`Failed to begin transaction: ${error}`);
@@ -345,7 +496,7 @@ class DatabaseConnection {
   }
 
   public async commitTransaction(transactionId: string): Promise<void> {
-    const transaction = this.activeTransactions.get(transactionId);
+    const transaction = this.getOwnedTransaction(transactionId);
     if (!transaction) {
       throw new Error(`No active transaction found with ID: ${transactionId}`);
     }
@@ -376,7 +527,7 @@ class DatabaseConnection {
   }
 
   public async rollbackTransaction(transactionId: string): Promise<void> {
-    const transaction = this.activeTransactions.get(transactionId);
+    const transaction = this.getOwnedTransaction(transactionId);
     if (!transaction) {
       throw new Error(`No active transaction found with ID: ${transactionId}`);
     }
@@ -398,11 +549,14 @@ class DatabaseConnection {
   }
 
   public getActiveTransactionIds(): string[] {
-    return Array.from(this.activeTransactions.keys());
+    const sessionId = currentSessionId();
+    return Array.from(this.activeTransactions.entries())
+      .filter(([, transaction]) => transaction.ownerSessionId === sessionId)
+      .map(([transactionId]) => transactionId);
   }
 
   public hasActiveTransaction(transactionId: string): boolean {
-    return this.activeTransactions.has(transactionId);
+    return this.getOwnedTransaction(transactionId) !== undefined;
   }
 
   /**
@@ -414,7 +568,7 @@ class DatabaseConnection {
     lastActivity?: Date;
     ageMs?: number;
   } {
-    const transaction = this.activeTransactions.get(transactionId);
+    const transaction = this.getOwnedTransaction(transactionId);
     if (!transaction) {
       return { exists: false };
     }
@@ -489,7 +643,7 @@ class DatabaseConnection {
     sql: string,
     params?: any[],
   ): Promise<T> {
-    const transaction = this.activeTransactions.get(transactionId);
+    const transaction = this.getOwnedTransaction(transactionId);
     if (!transaction) {
       throw new Error(`No active transaction found with ID: ${transactionId}`);
     }
@@ -499,9 +653,20 @@ class DatabaseConnection {
     transaction.lastQueryTime = now;
     transaction.queryCount++;
 
+    const timeoutMs = getRuntimeConfig().queryTimeoutMs;
     const startTime = Date.now();
     try {
-      const [results] = await transaction.connection.query(sql, params);
+      let results: any;
+      if (timeoutMs > 0) {
+        const outcome = await this.queryWithTimeout(transaction.connection, sql, params, timeoutMs);
+        if (outcome.timedOut) {
+          // The KILL may still reach this connection, so the transaction cannot continue
+          throw new QueryTimeoutError(timeoutMs);
+        }
+        results = outcome.results;
+      } else {
+        [results] = await transaction.connection.query(sql, params);
+      }
       const duration = Date.now() - startTime;
       QueryLogger.log(sql, params, duration, "success");
 
@@ -516,6 +681,12 @@ class DatabaseConnection {
     } catch (error: any) {
       const duration = Date.now() - startTime;
       QueryLogger.log(sql, params, duration, "error", error.message);
+      if (error instanceof QueryTimeoutError) {
+        this.discardTransaction(transactionId, "statement timed out");
+        throw new Error(
+          `Query execution in transaction failed: ${error.message}; transaction ${transactionId} was rolled back`,
+        );
+      }
       throw new Error(`Query execution in transaction failed: ${error}`);
     }
   }

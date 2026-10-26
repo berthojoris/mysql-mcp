@@ -3,15 +3,53 @@
 /**
  * MCP MySQL Server CLI
  * This script allows the MySQL MCP server to be run via NPX
- * It implements the Model Context Protocol using stdio transport
+ * It implements the Model Context Protocol using stdio transport (default)
+ * or, when enabled, the Streamable HTTP transport
  */
 
 const dotenv = require("dotenv");
 
 dotenv.config();
 
+// Transport flags map to environment variables; a flag overrides the variable.
+// They are taken out first so they are never read as permissions/categories.
+const FLAG_ENV = {
+  transport: "MCP_TRANSPORT",
+  host: "MCP_HTTP_HOST",
+  port: "MCP_HTTP_PORT",
+};
+
+const positional = [];
+const rawArgs = process.argv.slice(2);
+for (let i = 0; i < rawArgs.length; i++) {
+  const arg = rawArgs[i];
+  if (!arg.startsWith("--")) {
+    positional.push(arg);
+    continue;
+  }
+
+  if (arg === "--http" || arg === "--stdio") {
+    process.env.MCP_TRANSPORT = arg.slice(2);
+    continue;
+  }
+
+  const [flag, inlineValue] = arg.slice(2).split(/=(.*)/s);
+  const envName = FLAG_ENV[flag];
+  if (!envName) {
+    console.error(`Error: unknown option ${arg}`);
+    console.error("Options: --transport=stdio|http, --http, --stdio, --host=<addr>, --port=<n>");
+    process.exit(1);
+  }
+  const value = inlineValue !== undefined ? inlineValue : rawArgs[++i];
+  if (value === undefined || value === "") {
+    console.error(`Error: option --${flag} requires a value`);
+    process.exit(1);
+  }
+  process.env[envName] = value;
+}
+
 // Get MySQL connection string, permissions, and optional categories
-const args = process.argv.slice(2);
+const args = positional;
 const mysqlUrl = args.shift();
 
 let permissions;
@@ -34,7 +72,7 @@ for (let i = 0; i < args.length; i++) {
 if (!mysqlUrl) {
   console.error("Error: MySQL connection URL is required");
   console.error(
-    "Usage: mcp-mysql mysql://user:password@host:port/dbname [permissions] [categories]",
+    "Usage: mcp-mysql mysql://user:password@host:port/dbname [permissions] [categories] [--transport=stdio|http] [--host=<addr>] [--port=<n>]",
   );
   console.error("");
   console.error("Examples:");
@@ -83,6 +121,14 @@ if (!mysqlUrl) {
     "  - If permissions + categories: Only tools matching BOTH layers enabled",
   );
   console.error("  - If nothing specified: Read-only default (list,read,utility)");
+  console.error("");
+  console.error("Transport (default stdio):");
+  console.error(
+    '  mcp-mysql mysql://reader:pass@localhost:3306/mydb "list,read,utility" --transport=http --port=3000',
+  );
+  console.error(
+    "  Or set MCP_TRANSPORT=http. HTTP settings (auth, allowed hosts, limits): see DOCUMENTATIONS.md",
+  );
   process.exit(1);
 }
 

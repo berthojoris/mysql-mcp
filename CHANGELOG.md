@@ -5,6 +5,45 @@ All notable changes to the MySQL MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.2] - 2026-10-26
+
+### Changed
+- Synced `DOCUMENTATIONS.md` and `README.md` with the v1.45 code:
+  - Exact `Host`/`Origin` allowlist defaults, including a non-loopback bind, and `0` meaning "no limit" for the session, idle-timeout, and body-size settings.
+  - HTTP status codes for session errors, plus OAuth claim checks (60 s clock skew, client id source, JWKS discovery and caching).
+  - Audit log event reference, and query timeout cancellation details.
+  - Tool annotation classes, and that HTTP settings are ignored over stdio.
+- Corrected the transaction example to use `execute_in_transaction` with `transactionId`; `create_record` and `update_record` do not run inside a transaction.
+- Documented `CACHE_MAX_MEMORY_MB` and the `MCP_MYSQL_REQUEST_FILE` alias.
+
+### Fixed
+- Broken documentation links: the README navigation anchors, and links to sections that no longer exist in `DOCUMENTATIONS.md` (Setup & Configuration, Agent Configuration Examples, Category Filtering System, Complete Tools Reference). Added Remote Access and Troubleshooting to the `DOCUMENTATIONS.md` table of contents. Documentation only; the catalog remains at 88 tools.
+
+## [1.45.1] - 2026-10-26
+
+### Changed
+- `README.md` now lists the protection defaults (on in HTTP mode, off over stdio) and every HTTP setting with its default. It also shows how to run the HTTP server from `.env` and how to connect a client by URL. Documentation only; the catalog remains at 88 tools.
+
+## [1.45.0] - 2026-10-26
+
+### Added
+- **Streamable HTTP transport (opt-in)** for ChatGPT connectors and other remote MCP clients. Enable it with `--transport=http` (or `--http`) or `MCP_TRANSPORT=http`; `--host`/`--port` or `MCP_HTTP_HOST`/`MCP_HTTP_PORT` set the address. stdio remains the default and is unchanged when these settings are absent. Uses Node's built-in `http` module, so there are no new dependencies.
+- **HTTP authentication**: `MCP_HTTP_AUTH=token` (static bearer tokens of at least 32 characters, compared in constant time) or `oauth` (OAuth 2.1 resource server). The `oauth` mode validates JWT access tokens against the issuer's JWKS (RS/PS/ES/EdDSA; `none`/HMAC rejected), checks `iss`/`aud`/`exp`/`nbf` and required scopes, serves RFC 9728 Protected Resource Metadata, and adds `WWW-Authenticate` headers. `none` is refused unless the server is bound to loopback with loopback-only allowed hosts.
+- **HTTP hardening**: `Host`/`Origin` allowlists (DNS-rebinding protection), CORS for allowed origins, request body limit, concurrent-session cap, idle-session expiry, and sessions bound to the identity that created them.
+- **Protection settings** for both transports. They are on by default over HTTP and off over stdio: `MCP_QUERY_TIMEOUT_MS` (cancels statements on the server with `KILL QUERY`), `MCP_RATE_LIMIT_PER_MINUTE` (tool calls per client), `MCP_MAX_RESULT_BYTES` (truncates row arrays, rejects other oversized results), and `MCP_AUDIT_LOG` (JSON lines to stderr or a file).
+- **Read-only database user check**: in HTTP mode, `SHOW GRANTS` is inspected at startup and a warning is logged when the MySQL user can write. `MCP_REQUIRE_READONLY_DB_USER=true` makes startup fail instead.
+- **Tool annotations** (`title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) on all 88 tools, also returned by `list_all_tools`.
+- Jest tests for runtime config, authentication, the HTTP server (using the SDK client), annotations, grant inspection, and rate limiting.
+
+### Changed
+- Transactions belong to the MCP session that began them: other sessions cannot see, use, commit, or roll them back. Open transactions are rolled back when their session closes or expires. Over stdio there is one session, so behaviour does not change.
+- `begin_transaction` rejects a transaction ID that is already in use. Previously the open transaction was replaced and its connection leaked.
+- A statement that hits `MCP_QUERY_TIMEOUT_MS` inside a transaction rolls that transaction back.
+- `mcp-server.ts` builds its MCP server through a factory (one per HTTP session). Tool dispatch is unchanged.
+
+### Fixed
+- `get_transaction_status` now returns the `activeTransactions` list. It was previously dropped from the response, leaving only the message.
+
 ## [1.44.0] - 2026-10-26
 
 ### Changed

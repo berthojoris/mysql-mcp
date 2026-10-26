@@ -4,7 +4,7 @@
 
 **A production-ready Model Context Protocol (MCP) server for MySQL database integration with AI agents**
 
-**Last Updated:** 2026-10-26 13:35:39
+**Last Updated:** 2026-10-26 15:57:37
 
 [![npm version](https://img.shields.io/npm/v/@berthojoris/mcp-mysql-server)](https://www.npmjs.com/package/@berthojoris/mcp-mysql-server)
 [![npm downloads](https://img.shields.io/npm/dm/@berthojoris/mcp-mysql-server)](https://www.npmjs.com/package/@berthojoris/mcp-mysql-server)
@@ -12,7 +12,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io/)
 
-[Installation](#-installation) · [Quick Start](#-quick-start) · [Configuration](#-ai-agent-configuration) · [Permissions](#-permission-system) · [Tools](#-available-tools) · [Documentation](DOCUMENTATIONS.md)
+[Installation](#installation) · [Quick Start](#quick-start) · [Configuration](#ai-agent-configuration) · [Remote Access](#remote-access-chatgpt--other-remote-mcp-clients) · [Permissions](#permission-system) · [Tools](#available-tools) · [Documentation](DOCUMENTATIONS.md)
 
 </div>
 
@@ -45,7 +45,7 @@ Add to your AI agent config (`.mcp.json`, `.cursor/mcp.json`, etc.):
 }
 ```
 
-For agent-specific examples (Codex TOML, Zed, local path, multi-DB), see **[DOCUMENTATIONS.md → Setup & Configuration](DOCUMENTATIONS.md#setup--configuration-extended)**.
+For dual-layer and environment-variable configuration, see **[DOCUMENTATIONS.md → Configuration](DOCUMENTATIONS.md#configuration)**. To connect remote clients such as ChatGPT over HTTP, see [Remote Access](#remote-access-chatgpt--other-remote-mcp-clients).
 
 ---
 
@@ -94,7 +94,7 @@ npm run build
 
 ### 3. Configure Your AI Agent
 
-See [AI Agent Configuration](#-ai-agent-configuration) section below.
+See [AI Agent Configuration](#ai-agent-configuration) section below.
 
 ### 4. Restart Your AI Agent
 
@@ -117,7 +117,7 @@ Try asking your AI:
 
 Most AI agents use a similar JSON configuration format (the file location varies by tool).
 
-If you want ready-to-copy snippets per client (Claude Code/Cursor/Windsurf/Cline/Codex/Zed), see **[DOCUMENTATIONS.md → Agent Configuration Examples](DOCUMENTATIONS.md#agent-configuration-examples)**.
+The examples below use the default stdio transport, where the AI agent starts the server itself. Remote clients connect over HTTP instead; see [Remote Access](#remote-access-chatgpt--other-remote-mcp-clients).
 
 **Universal Configuration Template:**
 
@@ -209,7 +209,7 @@ Alternative approach using environment variables instead of connection string:
 }
 ```
 
-For more client-specific config snippets, see **[DOCUMENTATIONS.md → Setup & Configuration](DOCUMENTATIONS.md#setup--configuration-extended)**.
+More configuration details are in **[DOCUMENTATIONS.md → Configuration](DOCUMENTATIONS.md#configuration)**.
 
 ---
 
@@ -244,6 +244,89 @@ Set `MYSQL_MCP_CURSOR_REQUEST_FILE` to override the request file path.
 For Codex, Claude Code CLI, Cursor, Droid CLI, and other MCP agents, call `list_all_tools` first. It returns the live runtime catalog, enabled/disabled status, active permission/category profile, and recommended workflows for schema exploration, safe SELECT queries, CSV exports, transactions, and data changes.
 
 Use `export_table_to_csv` for table-based exports and `export_query_to_csv` for SELECT query exports.
+
+---
+
+### Remote Access (ChatGPT & other remote MCP clients)
+
+stdio stays the default. For remote clients such as ChatGPT connectors / developer mode, you can enable the **Streamable HTTP** transport with a flag or an environment variable, the same way you set permissions. Remove the flag, or set `MCP_TRANSPORT=stdio`, to turn it off again.
+
+```bash
+# Read-only MySQL account + bearer token, bound to localhost
+export MCP_HTTP_AUTH=token
+export MCP_HTTP_AUTH_TOKENS=$(openssl rand -hex 32)   # give this token to your clients
+npx -y @berthojoris/mcp-mysql-server mysql://mcp_reader:pass@localhost:3306/app "list,read,utility" --transport=http --port=3000
+```
+
+- **Endpoint**: `http://127.0.0.1:3000/mcp`, plus `GET /health`. Publish it over HTTPS with a reverse proxy or tunnel, and set `MCP_HTTP_PUBLIC_URL`.
+- **Auth**: `MCP_HTTP_AUTH=token` (bearer tokens) or `oauth` (OAuth 2.1 JWT validation against your authorization server, with RFC 9728 metadata, as needed by ChatGPT). `none` only works on loopback.
+- **Isolation**: `Host`/`Origin` checks (DNS-rebinding protection). Each session is bound to its identity, and each transaction to its session. A session's open transactions are rolled back when it closes or expires.
+- **Startup checks**: invalid or unsafe HTTP settings stop the server with an error. `MCP_HTTP_*` settings are ignored over stdio.
+- **Tool annotations**: every tool reports `readOnlyHint` and `destructiveHint`.
+
+#### Protection defaults
+
+Protections are **on by default in HTTP mode and off by default over stdio**, so existing stdio setups behave as before. Every value can be overridden with an environment variable on either transport.
+
+| Variable | stdio default | HTTP default | What it does |
+|----------|---------------|--------------|--------------|
+| `MCP_QUERY_TIMEOUT_MS` | `0` (off) | `30000` | Cancels longer statements on the MySQL server with `KILL QUERY`. A timed-out statement inside a transaction rolls that transaction back |
+| `MCP_RATE_LIMIT_PER_MINUTE` | `0` (off) | `60` | Tool calls per client per minute. The client is the auth identity, or the IP when there is none |
+| `MCP_MAX_RESULT_BYTES` | `0` (off) | `524288` | Maximum result size. Row arrays are truncated to fit; other oversized results return an error |
+| `MCP_AUDIT_LOG` | `off` | `stderr` | `off`, `stderr`, or a file path. One JSON line per tool call, authentication failure, and session open/close. SQL text is logged; other argument values are not |
+| `MCP_REQUIRE_READONLY_DB_USER` | `false` | `false` | `true` makes startup fail if the MySQL user can write. In HTTP mode a warning is always logged |
+
+#### HTTP settings
+
+| Variable / flag | Default | What it does |
+|-----------------|---------|--------------|
+| `MCP_TRANSPORT` / `--transport=stdio\|http`, `--http` | `stdio` | Turns the HTTP transport on or off |
+| `MCP_HTTP_HOST` / `--host=` | `127.0.0.1` | Bind address |
+| `MCP_HTTP_PORT` / `--port=` | `3000` | Port |
+| `MCP_HTTP_PATH` | `/mcp` | Endpoint path |
+| `MCP_HTTP_PUBLIC_URL` | – | Public HTTPS base URL. Required for `oauth` |
+| `MCP_HTTP_AUTH` | `none` | `none` (loopback only), `token`, or `oauth` |
+| `MCP_HTTP_AUTH_TOKENS` | – | Comma-separated bearer tokens, at least 32 characters each |
+| `MCP_OAUTH_ISSUER` / `MCP_OAUTH_AUDIENCE` / `MCP_OAUTH_JWKS_URI` / `MCP_OAUTH_REQUIRED_SCOPES` | – / resource URL / discovered / – | OAuth 2.1 token validation |
+| `MCP_HTTP_ALLOWED_HOSTS` | loopback names when bound to loopback | `Host` allowlist. Off (with a warning) when bound to a non-loopback address and neither this nor `MCP_HTTP_PUBLIC_URL` is set |
+| `MCP_HTTP_ALLOWED_ORIGINS` | loopback origins when bound to loopback | Browser `Origin` allowlist. Requests without `Origin` are always allowed |
+| `MCP_HTTP_TRUST_PROXY` | `false` | Take the client IP from `X-Forwarded-For` |
+| `MCP_HTTP_ALLOW_UNAUTHENTICATED` | `false` | Allow `none` outside loopback (not recommended) |
+| `MCP_HTTP_MAX_SESSIONS` | `100` | Maximum concurrent sessions (`0` = no limit) |
+| `MCP_HTTP_SESSION_IDLE_TIMEOUT_MS` | `1800000` | Idle sessions close after this time, and their transactions roll back (`0` = never) |
+| `MCP_HTTP_MAX_BODY_BYTES` | `1048576` | Maximum request body size (`0` = no limit) |
+
+In HTTP mode the server runs as a standalone service, so put the settings in `.env` (or your process manager) instead of an MCP client's `command` config:
+
+```env
+DB_HOST=localhost
+DB_USER=mcp_reader
+DB_PASSWORD=pass
+DB_NAME=app
+MCP_PERMISSIONS=list,read,utility
+MCP_TRANSPORT=http
+MCP_HTTP_PORT=3000
+MCP_HTTP_AUTH=token
+MCP_HTTP_AUTH_TOKENS=<64-hex-token>
+MCP_QUERY_TIMEOUT_MS=15000
+MCP_AUDIT_LOG=logs/mcp-audit.log
+```
+
+From the directory that holds `.env`, start it with `node dist/mcp-server.js` (from a clone) or the `npx` command above (a connection string argument overrides the `DB_*` values). Then point clients that support remote MCP servers at the URL. For example, in Claude Code's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "mysql-remote": {
+      "type": "http",
+      "url": "http://127.0.0.1:3000/mcp",
+      "headers": { "Authorization": "Bearer <64-hex-token>" }
+    }
+  }
+}
+```
+
+Full details (OAuth setup, sessions, read-only user SQL) are in **[DOCUMENTATIONS.md → Remote Access](DOCUMENTATIONS.md#remote-access-streamable-http-transport-v1450-2026-10-26-144606)**.
 
 ---
 
@@ -289,7 +372,7 @@ Control database access with a **dual-layer filtering system** that provides bot
 
 Report suspected security issues privately via [Private Vulnerability Reporting](https://github.com/berthojoris/mysql-mcp/security/advisories/new); see [SECURITY.md](SECURITY.md) for the policy.
 
-Common configuration examples are documented in **[DOCUMENTATIONS.md → Category Filtering System](DOCUMENTATIONS.md#🆕-category-filtering-system)**.
+Filtering rules and per-permission details are documented in **[DOCUMENTATIONS.md → Permission System](DOCUMENTATIONS.md#permission-system)**.
 
 ---
 
@@ -325,7 +408,7 @@ database_discovery,crud_operations,bulk_operations,seed_operations,custom_querie
 
 </details>
 
-Full category → tool mapping (and examples) lives in **[DOCUMENTATIONS.md → Category Filtering System](DOCUMENTATIONS.md#🆕-category-filtering-system)**.
+Tool descriptions per category are in **[DOCUMENTATIONS.md → Tool Categories](DOCUMENTATIONS.md#tool-categories)**.
 
 ---
 
@@ -333,13 +416,16 @@ Full category → tool mapping (and examples) lives in **[DOCUMENTATIONS.md → 
 
 The server exposes **88 tools** organized into categories (CRUD, seed, schema, discovery, and utilities).
 
-- Complete list of tools: **[DOCUMENTATIONS.md → Complete Tools Reference](DOCUMENTATIONS.md#🔧-complete-tools-reference)**
+- Complete list of tools: **[DOCUMENTATIONS.md → Tool Categories](DOCUMENTATIONS.md#tool-categories)**
+- Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`); see **[DOCUMENTATIONS.md → Tool annotations](DOCUMENTATIONS.md#tool-annotations)**
 
 ---
 
 ## Detailed Documentation
 
 For comprehensive documentation, see **[DOCUMENTATIONS.md](DOCUMENTATIONS.md)**:
+
+- **Remote Access** - Streamable HTTP transport, bearer/OAuth authentication, sessions, protection settings, audit log
 
 - **DDL Operations** - Create, alter, and drop tables
 - **Data Export Tools** - Export data to CSV format
