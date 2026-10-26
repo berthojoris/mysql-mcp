@@ -2050,7 +2050,7 @@ const TOOLS: Tool[] = withToolAnnotations([
   {
     name: "optimize_table",
     description:
-      "Optimizes a table to reclaim unused space and defragment data.",
+      "Optimizes a table to reclaim unused space and defragment data. Rebuilds the table, so it requires 'ddl' permission.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2091,7 +2091,7 @@ const TOOLS: Tool[] = withToolAnnotations([
   },
   {
     name: "repair_table",
-    description: "Repairs a corrupted table (MyISAM, ARCHIVE, CSV only).",
+    description: "Repairs a corrupted table (MyISAM, ARCHIVE, CSV only). Requires 'ddl' permission.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2148,17 +2148,13 @@ const TOOLS: Tool[] = withToolAnnotations([
   },
   {
     name: "flush_table",
-    description: "Flushes table(s) - closes and reopens them.",
+    description: "Flushes table(s) in the connected database - closes and reopens them. Requires 'ddl' permission.",
     inputSchema: {
       type: "object",
       properties: {
         table_name: {
           type: "string",
-          description: "Optional: specific table (omit for all tables)",
-        },
-        with_read_lock: {
-          type: "boolean",
-          description: "Acquire read lock after flushing",
+          description: "Optional: specific table (omit for all tables in the connected database)",
         },
         database: {
           type: "string",
@@ -2345,7 +2341,7 @@ const TOOLS: Tool[] = withToolAnnotations([
   {
     name: "optimize_fulltext",
     description:
-      "Optimizes a table to update FULLTEXT index statistics and reclaim space. Use this after bulk inserts or updates to improve search performance.",
+      "Optimizes a table to update FULLTEXT index statistics and reclaim space. Use this after bulk inserts or updates to improve search performance. Rebuilds the table, so it requires 'ddl' permission.",
     inputSchema: {
       type: "object",
       properties: {

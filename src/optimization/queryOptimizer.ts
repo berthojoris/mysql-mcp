@@ -130,21 +130,49 @@ export class QueryOptimizer {
   }
 
   /**
-   * Sanitize identifier (table name, index name) to prevent injection
-   * Only allows alphanumeric characters, underscores, and dots (for schema.table)
-   */
-  private sanitizeIdentifier(identifier: string): string {
-    // Remove any characters that aren't alphanumeric, underscore, or dot
-    return identifier.replace(/[^a-zA-Z0-9_\.]/g, "");
-  }
-
-  /**
    * Validate that an identifier is safe to use
    */
   private isValidIdentifier(identifier: string): boolean {
     // Must start with letter or underscore, contain only valid chars
     // Max length 64 (MySQL limit)
     return /^[a-zA-Z_][a-zA-Z0-9_\.]{0,63}$/.test(identifier);
+  }
+
+  /**
+   * Return the values that are safe identifiers. Hints are added after the
+   * query has been validated, so anything else is dropped rather than quoted.
+   */
+  private safeIdentifiers(value: unknown): string[] {
+    const values = Array.isArray(value) ? value : [value];
+    return values.filter(
+      (item): item is string =>
+        typeof item === "string" && this.isValidIdentifier(item),
+    );
+  }
+
+  /**
+   * Return a SEMIJOIN/SUBQUERY strategy list if every strategy is allowed
+   */
+  private safeStrategy(strategy: unknown, allowed: string[]): string | null {
+    if (typeof strategy !== "string") {
+      return null;
+    }
+    const strategies = strategy
+      .split(",")
+      .map((item) => item.trim().toUpperCase());
+    return strategies.every((item) => allowed.includes(item))
+      ? strategies.join(", ")
+      : null;
+  }
+
+  /**
+   * Return a positive integer no larger than max, or null
+   */
+  private safePositiveInteger(value: unknown, max: number): number | null {
+    const number = Number(value);
+    return Number.isInteger(number) && number > 0 && number <= max
+      ? number
+      : null;
   }
 
   /**
@@ -223,35 +251,27 @@ export class QueryOptimizer {
 
     // Process shorthand hints
     if (hints.maxExecutionTime !== undefined) {
-      // Validate maxExecutionTime is a positive integer
-      const maxTime = Math.floor(Math.abs(Number(hints.maxExecutionTime)));
-      if (maxTime > 0 && maxTime <= 31536000000) {
-        // Max 1 year in ms
+      // Max 1 year in ms
+      const maxTime = this.safePositiveInteger(
+        Math.floor(Math.abs(Number(hints.maxExecutionTime))),
+        31536000000,
+      );
+      if (maxTime !== null) {
         hintParts.push(`MAX_EXECUTION_TIME(${maxTime})`);
       }
     }
 
     if (hints.forceIndex) {
-      const indexes = Array.isArray(hints.forceIndex)
-        ? hints.forceIndex
-        : [hints.forceIndex];
-      const sanitizedIndexes = indexes
-        .map((idx) => this.sanitizeIdentifier(idx))
-        .filter((idx) => this.isValidIdentifier(idx));
-      if (sanitizedIndexes.length > 0) {
-        hintParts.push(`INDEX(${sanitizedIndexes.join(", ")})`);
+      const indexes = this.safeIdentifiers(hints.forceIndex);
+      if (indexes.length > 0) {
+        hintParts.push(`INDEX(${indexes.join(", ")})`);
       }
     }
 
     if (hints.ignoreIndex) {
-      const indexes = Array.isArray(hints.ignoreIndex)
-        ? hints.ignoreIndex
-        : [hints.ignoreIndex];
-      const sanitizedIndexes = indexes
-        .map((idx) => this.sanitizeIdentifier(idx))
-        .filter((idx) => this.isValidIdentifier(idx));
-      if (sanitizedIndexes.length > 0) {
-        hintParts.push(`NO_INDEX(${sanitizedIndexes.join(", ")})`);
+      const indexes = this.safeIdentifiers(hints.ignoreIndex);
+      if (indexes.length > 0) {
+        hintParts.push(`NO_INDEX(${indexes.join(", ")})`);
       }
     }
 
@@ -262,6 +282,11 @@ export class QueryOptimizer {
    * Format a single optimizer hint
    */
   private formatHint(hint: OptimizerHint): string {
+    const table = this.safeIdentifiers(hint.table)[0];
+    if (hint.table !== undefined && !table) {
+      return "";
+    }
+
     switch (hint.type) {
       // Join-Order Hints
       case "JOIN_FIXED_ORDER":
@@ -270,7 +295,10 @@ export class QueryOptimizer {
       case "JOIN_PREFIX":
       case "JOIN_SUFFIX":
         if (hint.tables && hint.tables.length > 0) {
-          return `${hint.type}(${hint.tables.join(", ")})`;
+          const tables = this.safeIdentifiers(hint.tables);
+          if (tables.length === hint.tables.length) {
+            return `${hint.type}(${tables.join(", ")})`;
+          }
         }
         return "";
 
@@ -283,8 +311,8 @@ export class QueryOptimizer {
       case "NO_HASH_JOIN":
       case "MERGE":
       case "NO_MERGE":
-        if (hint.table) {
-          return `${hint.type}(${hint.table})`;
+        if (table) {
+          return `${hint.type}(${table})`;
         }
         return `${hint.type}()`;
 
@@ -299,13 +327,15 @@ export class QueryOptimizer {
       case "NO_RANGE_OPTIMIZATION":
       case "SKIP_SCAN":
       case "NO_SKIP_SCAN":
-        if (hint.table && hint.index) {
-          const indexes = Array.isArray(hint.index)
-            ? hint.index.join(", ")
-            : hint.index;
-          return `${hint.type}(${hint.table} ${indexes})`;
-        } else if (hint.table) {
-          return `${hint.type}(${hint.table})`;
+        if (table && hint.index) {
+          const indexes = this.safeIdentifiers(hint.index);
+          const indexCount = Array.isArray(hint.index) ? hint.index.length : 1;
+          if (indexes.length === 0 || indexes.length !== indexCount) {
+            return "";
+          }
+          return `${hint.type}(${table} ${indexes.join(", ")})`;
+        } else if (table) {
+          return `${hint.type}(${table})`;
         }
         return "";
 
@@ -313,28 +343,37 @@ export class QueryOptimizer {
       case "SEMIJOIN":
       case "NO_SEMIJOIN":
         if (hint.strategy) {
-          return `${hint.type}(${hint.strategy})`;
+          const strategy = this.safeStrategy(hint.strategy, [
+            "DUPSWEEDOUT", "FIRSTMATCH", "LOOSESCAN", "MATERIALIZATION",
+          ]);
+          return strategy ? `${hint.type}(${strategy})` : "";
         }
         return `${hint.type}()`;
-      case "SUBQUERY":
-        if (hint.strategy) {
-          return `SUBQUERY(${hint.strategy})`;
-        }
-        return "";
+      case "SUBQUERY": {
+        const strategy = this.safeStrategy(hint.strategy, [
+          "INTOEXISTS", "MATERIALIZATION",
+        ]);
+        return strategy ? `SUBQUERY(${strategy})` : "";
+      }
 
       // Miscellaneous
-      case "MAX_EXECUTION_TIME":
-        if (hint.value !== undefined) {
-          return `MAX_EXECUTION_TIME(${hint.value})`;
-        }
-        return "";
-      case "RESOURCE_GROUP":
-        if (hint.value) {
-          return `RESOURCE_GROUP(${hint.value})`;
-        }
-        return "";
+      case "MAX_EXECUTION_TIME": {
+        const maxTime = this.safePositiveInteger(hint.value, 31536000000);
+        return maxTime !== null ? `MAX_EXECUTION_TIME(${maxTime})` : "";
+      }
+      case "RESOURCE_GROUP": {
+        const group = this.safeIdentifiers(hint.value)[0];
+        return group ? `RESOURCE_GROUP(${group})` : "";
+      }
       case "SET_VAR":
-        if (hint.value) {
+        // name=value, where value is a number, a word, or a quoted list such
+        // as optimizer_switch='mrr=on,mrr_cost_based=off'
+        if (
+          typeof hint.value === "string" &&
+          /^[a-zA-Z_][a-zA-Z0-9_]{0,63}s*=s*(?:[a-zA-Z0-9_.]{1,64}|'[a-zA-Z0-9_=,.]{1,256}')$/.test(
+            hint.value,
+          )
+        ) {
           return `SET_VAR(${hint.value})`;
         }
         return "";
@@ -358,9 +397,10 @@ export class QueryOptimizer {
     }
 
     // Find table references and add USE INDEX after them
-    const indexes = Array.isArray(hints.useIndex)
-      ? hints.useIndex
-      : [hints.useIndex];
+    const indexes = this.safeIdentifiers(hints.useIndex);
+    if (indexes.length === 0) {
+      return query;
+    }
     const useIndexClause = `USE INDEX (${indexes.join(", ")})`;
 
     // Simple approach: add after FROM clause table

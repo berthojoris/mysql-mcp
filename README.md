@@ -4,7 +4,7 @@
 
 **A production-ready Model Context Protocol (MCP) server for MySQL database integration with AI agents**
 
-**Last Updated:** 2026-10-26 15:57:37
+**Last Updated:** 2026-10-26 16:39:47
 
 [![npm version](https://img.shields.io/npm/v/@berthojoris/mcp-mysql-server)](https://www.npmjs.com/package/@berthojoris/mcp-mysql-server)
 [![npm downloads](https://img.shields.io/npm/dm/@berthojoris/mcp-mysql-server)](https://www.npmjs.com/package/@berthojoris/mcp-mysql-server)
@@ -349,10 +349,15 @@ Control database access with a **dual-layer filtering system** that provides bot
 | `update` | UPDATE existing records | Data maintenance |
 | `delete` | DELETE records | Data cleanup |
 | `execute` | Execute custom INSERT/UPDATE SQL (DELETE requires `delete` permission too) | Complex write operations |
-| `ddl` | CREATE/ALTER/DROP tables | Schema management |
+| `ddl` | CREATE/ALTER/DROP tables; optimize, repair, and flush tables | Schema management |
 | `procedure` | Stored procedures (CREATE/DROP/EXECUTE) | Procedure management |
 | `transaction` | BEGIN, COMMIT, ROLLBACK | ACID operations |
 | `utility` | Connection testing, diagnostics | Troubleshooting |
+
+**Security changes in v1.46.0 (review before upgrading):**
+- `optimize_table`, `repair_table`, `flush_table`, and `optimize_fulltext` now require `ddl` instead of `utility`, so the read-only default no longer includes them. `flush_table` is limited to the connected database and no longer accepts `with_read_lock`.
+- `run_select_query` drops invalid optimizer hint values and validates the query again after hints are applied.
+- System schema names are detected with whitespace around the dot (e.g. `mysql . user`).
 
 **Changes in v1.44.0 (review before upgrading):**
 - **Read-only by default**: with no permissions and no categories, the server now enables only `list,read,utility` (previously every tool). To keep full access, pass `list,read,create,update,delete,execute,ddl,utility,transaction,procedure`.

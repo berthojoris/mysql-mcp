@@ -518,9 +518,11 @@ export class SecurityLayer {
     allowAdvancedQueries: boolean,
   ): { valid: boolean; error?: string } {
     // Remove string literals to avoid false positives, and unwrap quoted
-    // identifiers so `mysql`.`user` is still detected
-    const queryWithoutStrings =
-      this.maskQuotedContent(cleanQuery, true) ?? cleanQuery.replace(/`/g, "");
+    // identifiers so `mysql`.`user` is still detected. MySQL allows whitespace
+    // around the qualifier dot, so `mysql . user` is joined to mysql.user.
+    const queryWithoutStrings = (
+      this.maskQuotedContent(cleanQuery, true) ?? cleanQuery.replace(/`/g, "")
+    ).replace(/\s*\.\s*/g, ".");
 
     for (const keyword of this.dangerousKeywords) {
       // Enhanced regex with word boundaries and case insensitivity

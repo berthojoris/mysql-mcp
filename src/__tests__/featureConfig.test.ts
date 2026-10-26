@@ -28,6 +28,22 @@ describe("FeatureConfig defaults", () => {
     expect(config.isToolEnabled("beginTransaction")).toBe(false);
   });
 
+  it("keeps table rebuild, repair and flush tools out of the read-only default", () => {
+    const config = new FeatureConfig();
+
+    expect(config.isToolEnabled("analyzeTable")).toBe(true);
+    expect(config.isToolEnabled("checkTable")).toBe(true);
+
+    expect(config.isToolEnabled("optimizeTable")).toBe(false);
+    expect(config.isToolEnabled("repairTable")).toBe(false);
+    expect(config.isToolEnabled("flushTable")).toBe(false);
+    expect(config.isToolEnabled("optimizeFulltext")).toBe(false);
+
+    const ddl = new FeatureConfig("list,read,utility,ddl");
+    expect(ddl.isToolEnabled("flushTable")).toBe(true);
+    expect(ddl.isToolEnabled("optimizeTable")).toBe(true);
+  });
+
   it("reports the default permissions in the access profile", () => {
     const profile = new FeatureConfig().getConfigSnapshot();
 

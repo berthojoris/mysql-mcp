@@ -5,6 +5,19 @@ All notable changes to the MySQL MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.46.0] - 2026-10-26
+
+### Security
+- `run_select_query` validates optimizer `hints` before adding them to the SQL. Table and index names must be identifiers, strategies and `MAX_EXECUTION_TIME`/`RESOURCE_GROUP`/`SET_VAR` values must match their MySQL forms, and invalid values are dropped. The query with hints applied is validated again before it runs.
+- System schema checks (`mysql.user`, `mysql.db`, and the `execute` requirement for `information_schema`/`mysql`/`performance_schema`/`sys`) now also match names with whitespace around the dot.
+
+### Changed
+- **Breaking:** `optimize_table`, `repair_table`, `flush_table`, and `optimize_fulltext` require `ddl` instead of `utility`, so the read-only default (`list,read,utility`) no longer enables them. `analyze_table`, `check_table`, and `analyze_index` stay in `utility`.
+- `flush_table` flushes only tables in the connected database (all of them when `table_name` is omitted) and rejects `with_read_lock`, which left the lock held on a pooled connection. The parameter was removed from the tool schema. The catalog remains at 88 tools.
+
+### Added
+- Jest tests for hint validation, qualified system schema names, and the maintenance tool permissions.
+
 ## [1.45.2] - 2026-10-26
 
 ### Changed

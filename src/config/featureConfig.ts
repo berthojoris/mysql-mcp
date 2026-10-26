@@ -163,14 +163,14 @@ export const toolCategoryMap: Record<string, ToolCategory> = {
   dropConstraint: ToolCategory.DDL,
   addCheckConstraint: ToolCategory.DDL,
 
-  // Table maintenance tools
+  // Table maintenance tools (rebuilding, repairing or flushing tables needs ddl)
   analyzeTable: ToolCategory.UTILITY,
-  optimizeTable: ToolCategory.UTILITY,
+  optimizeTable: ToolCategory.DDL,
   checkTable: ToolCategory.UTILITY,
-  repairTable: ToolCategory.UTILITY,
+  repairTable: ToolCategory.DDL,
   truncateTable: ToolCategory.DDL,
   getTableStatus: ToolCategory.LIST,
-  flushTable: ToolCategory.UTILITY,
+  flushTable: ToolCategory.DDL,
   getTableSize: ToolCategory.LIST,
 
   // Query optimization tools
@@ -187,7 +187,7 @@ export const toolCategoryMap: Record<string, ToolCategory> = {
   getFulltextInfo: ToolCategory.LIST,
   dropFulltextIndex: ToolCategory.DDL,
   getFulltextStats: ToolCategory.LIST,
-  optimizeFulltext: ToolCategory.UTILITY,
+  optimizeFulltext: ToolCategory.DDL,
 };
 
 const toolAdditionalPermissions: Record<string, ToolCategory[]> = {

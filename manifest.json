@@ -1,7 +1,7 @@
 {
   "name": "mysql-mcp",
   "description": "A Model Context Protocol for MySQL database interaction",
-  "version": "1.45.2",
+  "version": "1.46.0",
   "tools": [
     {
       "name": "list_databases",
@@ -2660,7 +2660,7 @@
     },
     {
       "name": "optimize_table",
-      "description": "Optimizes a table to reclaim unused space and defragment data.",
+      "description": "Optimizes a table to reclaim unused space and defragment data. Rebuilds the table, so it requires 'ddl' permission.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -2717,7 +2717,7 @@
     },
     {
       "name": "repair_table",
-      "description": "Repairs a corrupted table (MyISAM, ARCHIVE, CSV only).",
+      "description": "Repairs a corrupted table (MyISAM, ARCHIVE, CSV only). Requires 'ddl' permission.",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -2795,17 +2795,13 @@
     },
     {
       "name": "flush_table",
-      "description": "Flushes table(s) - closes and reopens them.",
+      "description": "Flushes table(s) in the connected database - closes and reopens them. Requires 'ddl' permission.",
       "input_schema": {
         "type": "object",
         "properties": {
           "table_name": {
             "type": "string",
-            "description": "Optional: specific table (omit for all tables)"
-          },
-          "with_read_lock": {
-            "type": "boolean",
-            "description": "Acquire read lock after flushing"
+            "description": "Optional: specific table (omit for all tables in the connected database)"
           },
           "database": {
             "type": "string",
@@ -3028,7 +3024,7 @@
     },
     {
       "name": "optimize_fulltext",
-      "description": "Optimizes a table to update FULLTEXT index statistics and reclaim space. Use this after bulk inserts or updates to improve search performance.",
+      "description": "Optimizes a table to update FULLTEXT index statistics and reclaim space. Use this after bulk inserts or updates to improve search performance. Rebuilds the table, so it requires 'ddl' permission.",
       "input_schema": {
         "type": "object",
         "properties": {

@@ -106,3 +106,31 @@ describe("SecurityLayer.validateQuery - common table expressions", () => {
     expect(withExecute().validateQuery(query, true).valid).toBe(false);
   });
 });
+
+describe("SecurityLayer.validateQuery - qualified system schema names", () => {
+  it.each([
+    "SELECT * FROM mysql . user",
+    "SELECT * FROM mysql\n.\nuser",
+    "SELECT * FROM `mysql` . `user`",
+  ])("blocks %s even with execute permission", (query) => {
+    const result = withExecute().validateQuery(query, true);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("MYSQL.USER");
+  });
+
+  it.each([
+    "SELECT * FROM information_schema . tables",
+    "SELECT * FROM sys . processlist",
+  ])("requires execute permission for %s", (query) => {
+    const result = readOnly().validateQuery(query);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("execute");
+  });
+
+  it("still accepts qualified names of the connected schema", () => {
+    expect(readOnly().validateQuery("SELECT o . id FROM orders o")).toEqual({
+      valid: true,
+      queryType: "SELECT",
+    });
+  });
+});

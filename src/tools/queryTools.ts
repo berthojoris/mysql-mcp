@@ -94,6 +94,19 @@ export class QueryTools {
         if (finalQuery !== query) {
           optimizedQuery = finalQuery;
         }
+
+        // Hints change the SQL after validation, so validate the result too.
+        // The optimizer hint comment is the only comment allowed through.
+        const hintedValidation = this.security.validateQuery(
+          finalQuery.replace(/\/\*\+[^*]*\*\//, " "),
+          hasExecutePermission,
+        );
+        if (!hintedValidation.valid || hintedValidation.queryType !== "SELECT") {
+          return {
+            status: "error",
+            error: `Query validation failed after applying hints: ${hintedValidation.error || "Only SELECT queries are allowed"}`,
+          };
+        }
       }
 
       // Handle dry_run: return query plan and cost estimate without executing

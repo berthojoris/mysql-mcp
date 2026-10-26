@@ -253,8 +253,8 @@ For CSV exports, use `export_table_to_csv` for table-based exports and `export_q
 | `update` | Update records | `update_record`, `bulk_update` |
 | `delete` | Delete records | `delete_record`, `bulk_delete`, DELETE via `execute_write_query` (requires both `execute` and `delete`) |
 | `execute` | Custom SQL (INSERT/UPDATE; not DELETE without `delete`) | `execute_write_query` |
-| `ddl` | Schema changes | `create_table`, `alter_table` |
-| `utility` | Utility operations | `test_connection`, `analyze_table` |
+| `ddl` | Schema changes; rebuilding, repairing or flushing tables | `create_table`, `alter_table`, `optimize_table`, `repair_table`, `flush_table`, `optimize_fulltext` |
+| `utility` | Utility operations | `test_connection`, `analyze_table`, `check_table`, `analyze_index` |
 | `transaction` | Transaction management | `begin_transaction`, `commit_transaction` |
 | `procedure` | Stored procedures | `create_stored_procedure`, `execute_stored_procedure` |
 
@@ -273,6 +273,12 @@ CSV exports require both `utility` and `read` permissions; their category remain
 Information queries such as SHOW/DESCRIBE/EXPLAIN require `list` or `read`. MySQL DDL may implicitly commit, even when called through a transaction tool.
 
 `EXPLAIN ANALYZE` (MySQL 8.0.18+) executes the statement it wraps, including multi-table UPDATE/DELETE, so it is authorized as that inner statement: `read` for SELECT, `update` or `execute` for UPDATE, and `delete` for DELETE. Plan-only `EXPLAIN` (without ANALYZE) remains an information query and only requires `list` or `read` (2026-10-12 20:39:13).
+
+`optimize_table`, `repair_table`, `flush_table`, and `optimize_fulltext` rebuild, repair, or flush tables, so they require `ddl` instead of `utility` and are no longer part of the read-only default. `flush_table` only flushes tables in the connected database (all of them when `table_name` is omitted) and rejects `with_read_lock`, because the lock would stay held on a pooled connection after the call returns. `analyze_table`, `check_table`, and `analyze_index` remain `utility` tools (2026-10-26 16:39:47).
+
+`run_select_query` optimizer `hints` are added to the SQL after it is validated, so every hint value is checked first: table and index names must be plain identifiers, `SEMIJOIN`/`SUBQUERY` strategies must be MySQL strategy names, `MAX_EXECUTION_TIME` must be a positive integer, and `SET_VAR` must be `name=value`. Invalid values are dropped, and the query with hints applied is validated again before it runs (2026-10-26 16:39:47).
+
+Schema-qualified names are matched with any whitespace around the dot, so `mysql . user` is blocked like `mysql.user`, and `information_schema . tables` still requires `execute` (2026-10-26 16:39:47).
 
 `execute_write_query` accepts only INSERT, UPDATE, and DELETE. Schema changes must use enabled DDL tools, even when `execute` and `ddl` permissions are both present.
 
@@ -337,7 +343,7 @@ Information queries such as SHOW/DESCRIBE/EXPLAIN require `list` or `read`. MySQ
 - `get_fulltext_info` - Get FULLTEXT index information
 - `drop_fulltext_index` - Drop FULLTEXT indexes
 - `get_fulltext_stats` - Get FULLTEXT index statistics
-- `optimize_fulltext` - Optimize FULLTEXT indexes
+- `optimize_fulltext` - Optimize FULLTEXT indexes (requires `ddl`)
 
 ### 9. Constraint Management (7 tools)
 - `list_foreign_keys` - List foreign keys
@@ -373,12 +379,12 @@ Information queries such as SHOW/DESCRIBE/EXPLAIN require `list` or `read`. MySQ
 
 ### 13. Table Maintenance (8 tools)
 - `analyze_table` - Update statistics
-- `optimize_table` - Reclaim space
+- `optimize_table` - Reclaim space (requires `ddl`)
 - `check_table` - Check for errors
-- `repair_table` - Repair corrupted tables
+- `repair_table` - Repair corrupted tables (requires `ddl`)
 - `truncate_table` - Remove all rows
 - `get_table_status` - Get table statistics
-- `flush_table` - Close/reopen table
+- `flush_table` - Close/reopen tables in the connected database (requires `ddl`)
 - `get_table_size` - Get size information
 
 ### 14. Transaction Management (5 tools)

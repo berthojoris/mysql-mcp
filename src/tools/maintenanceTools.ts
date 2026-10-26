@@ -340,7 +340,9 @@ export class MaintenanceTools {
   }
 
   /**
-   * Flush table (close and reopen)
+   * Flush table(s) of the connected database (close and reopen).
+   * WITH READ LOCK is not supported: the lock would stay on a pooled
+   * connection and, without a table name, block writes server-wide.
    */
   async flushTable(params: {
     table_name?: string;
@@ -360,27 +362,41 @@ export class MaintenanceTools {
       const { table_name, with_read_lock = false } = params;
       const database = dbValidation.database;
 
-      let query: string;
+      if (with_read_lock) {
+        return {
+          status: "error",
+          error: "with_read_lock is not supported: the read lock would outlive this call on a pooled connection.",
+        };
+      }
+
+      let tableNames: string[];
 
       if (table_name) {
         if (!this.security.validateIdentifier(table_name).valid) {
           return { status: "error", error: "Invalid table name" };
         }
-        query = `FLUSH TABLES \`${database}\`.\`${table_name}\``;
-        if (with_read_lock) {
-          query += " WITH READ LOCK";
-        }
+        tableNames = [table_name];
       } else {
-        query = with_read_lock ? "FLUSH TABLES WITH READ LOCK" : "FLUSH TABLES";
+        // Flush only the connected database, never every table on the server
+        const rows = await this.db.query<any[]>(
+          "SELECT TABLE_NAME AS table_name FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'",
+          [database],
+        );
+        tableNames = rows.map((row) => row.table_name);
       }
 
-      await this.db.query(query);
+      if (tableNames.length > 0) {
+        const tableList = tableNames
+          .map((name) => `\`${database}\`.\`${name.replace(/`/g, "``")}\``)
+          .join(", ");
+        await this.db.query(`FLUSH TABLES ${tableList}`);
+      }
 
       return {
         status: "success",
         message: table_name
-          ? `Table '${table_name}' flushed successfully${with_read_lock ? " with read lock" : ""}`
-          : `All tables flushed successfully${with_read_lock ? " with read lock" : ""}`,
+          ? `Table '${table_name}' flushed successfully`
+          : `${tableNames.length} table(s) in '${database}' flushed successfully`,
       };
     } catch (error: any) {
       return {
