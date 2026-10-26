@@ -9,9 +9,9 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { MySQLMCP } from "./index.js";
-import { getEnabledTools, isToolEnabled } from "./tools/toolRegistry.js";
-import { validateToolArguments } from "./tools/toolArgumentValidation.js";
+import { MySQLMCP } from "./index";
+import { getEnabledTools, isToolEnabled } from "./tools/toolRegistry";
+import { validateToolArguments } from "./tools/toolArgumentValidation";
 
 // Get permissions and categories from environment variables (set by bin/mcp-mysql.js)
 // Layer 1 (Permissions): MCP_PERMISSIONS or MCP_CONFIG (backward compatible)
@@ -19,7 +19,10 @@ import { validateToolArguments } from "./tools/toolArgumentValidation.js";
 const permissions = process.env.MCP_PERMISSIONS || process.env.MCP_CONFIG || "";
 const categories = process.env.MCP_CATEGORIES || "";
 const SERVER_NAME = "mysql-mcp-server";
-const SERVER_VERSION = "1.43.5";
+// Read from package.json (one level above both src/ and dist/)
+const SERVER_VERSION: string = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"),
+).version;
 
 // Declare the MySQL MCP instance (will be initialized in main())
 let mysqlMCP: MySQLMCP;
@@ -902,7 +905,7 @@ const TOOLS: Tool[] = [
         },
         useCache: {
           type: "boolean",
-          description: "Whether to use query result caching (default: true)",
+          description: "Whether to use query result caching when the cache is enabled with CACHE_ENABLED=true (default: true)",
         },
         dry_run: {
           type: "boolean",
@@ -2460,6 +2463,30 @@ const inferSqlToolName = (query: string, mode: CursorRequestMode = "auto"): stri
   );
 };
 
+// Dispatch a tool to its MySQLMCP method (snake_case name -> camelCase method).
+// Callers must validate arguments and check that the tool is enabled first.
+const invokeTool = async (
+  toolName: string,
+  args: Record<string, any> = {},
+): Promise<any> => {
+  if (toolName === "list_all_tools") {
+    return await mysqlMCP.listAllTools(getRuntimeToolCatalog());
+  }
+
+  if (toolName === "cursor_execute_request") {
+    return await executeCursorRequest();
+  }
+
+  const methodName = TOOL_METHOD_OVERRIDES[toolName] || toCamelCase(toolName);
+  const method = (mysqlMCP as any)[methodName];
+
+  if (typeof method !== "function") {
+    throw new Error(`No handler method found for tool: ${toolName}`);
+  }
+
+  return await method.call(mysqlMCP, args);
+};
+
 const executeToolByName = async (
   toolName: string,
   args: Record<string, any> = {},
@@ -2483,18 +2510,7 @@ const executeToolByName = async (
     );
   }
 
-  if (toolName === "list_all_tools") {
-    return await mysqlMCP.listAllTools(getRuntimeToolCatalog());
-  }
-
-  const methodName = TOOL_METHOD_OVERRIDES[toolName] || toCamelCase(toolName);
-  const method = (mysqlMCP as any)[methodName];
-
-  if (typeof method !== "function") {
-    throw new Error(`No handler method found for Cursor bridge tool: ${toolName}`);
-  }
-
-  return await method.call(mysqlMCP, args);
+  return await invokeTool(toolName, args);
 };
 
 const executeCursorRequest = async (): Promise<any> => {
@@ -2565,544 +2581,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
 
   try {
     assertToolEnabled(name);
-    let result;
-
-    switch (name) {
-      case "list_databases":
-        result = await mysqlMCP.listDatabases();
-        break;
-
-      case "list_tables":
-        result = await mysqlMCP.listTables(
-          (args || {}) as { database?: string },
-        );
-        break;
-
-      case "get_database_summary":
-        result = await mysqlMCP.getDatabaseSummary(
-          (args || {}) as { 
-            database?: string;
-            max_tables?: number;
-            include_relationships?: boolean;
-          },
-        );
-        break;
-
-      case "get_schema_erd":
-        result = await mysqlMCP.getSchemaERD(
-          (args || {}) as { database?: string },
-        );
-        break;
-
-      case "get_schema_rag_context":
-        result = await mysqlMCP.getSchemaRagContext(
-          (args || {}) as {
-            database?: string;
-            max_tables?: number;
-            max_columns?: number;
-            include_relationships?: boolean;
-            include_comments?: boolean;
-            keyword_filter?: string;
-          },
-        );
-        break;
-
-      case "find_tables_by_keyword":
-        result = await mysqlMCP.findTablesByKeyword(
-          (args || {}) as {
-            keyword: string;
-            search_in?: "table_names" | "column_names" | "comments" | "all";
-            database?: string;
-            limit?: number;
-          },
-        );
-        break;
-
-      case "search_schema":
-        result = await mysqlMCP.searchSchema(
-          (args || {}) as {
-            query: string;
-            modes?: Array<"table_names" | "column_names" | "comments" | "sample_data">;
-            max_results?: number;
-            database?: string;
-            tables?: string[];
-            columns?: string[];
-            max_tables?: number;
-            limit_per_table?: number;
-          },
-        );
-        break;
-
-      case "search_data_across_tables":
-        result = await mysqlMCP.searchDataAcrossTables(
-          (args || {}) as {
-            keyword: string;
-            tables?: string[];
-            columns?: string[];
-            database?: string;
-            limit_per_table?: number;
-            max_tables?: number;
-          },
-        );
-        break;
-
-      case "get_column_statistics":
-        result = await mysqlMCP.getColumnStatistics(
-          (args || {}) as {
-            table_name: string;
-            column_name: string;
-            database?: string;
-          },
-        );
-        break;
-
-      case "read_table_schema":
-        result = await mysqlMCP.readTableSchema(
-          (args || {}) as { table_name: string },
-        );
-        break;
-
-      // CRUD Tools
-      case "create_record":
-        result = await mysqlMCP.createRecord(
-          (args || {}) as { table_name: string; data: Record<string, any> },
-        );
-        break;
-
-      case "read_records":
-        result = await mysqlMCP.readRecords(
-          (args || {}) as {
-            table_name: string;
-            filters?: any[];
-            pagination?: { page: number; limit: number };
-            sorting?: { field: string; direction: "asc" | "desc" };
-          },
-        );
-        break;
-
-      case "update_record":
-        result = await mysqlMCP.updateRecord(
-          (args || {}) as {
-            table_name: string;
-            data: Record<string, any>;
-            conditions: any[];
-          },
-        );
-        break;
-
-      case "delete_record":
-        result = await mysqlMCP.deleteRecord(
-          (args || {}) as { table_name: string; conditions: any[] },
-        );
-        break;
-
-      // Bulk Operations
-      case "bulk_insert":
-        result = await mysqlMCP.bulkInsert(
-          (args || {}) as {
-            table_name: string;
-            data: Record<string, any>[];
-            batch_size?: number;
-          },
-        );
-        break;
-
-      case "bulk_update":
-        result = await mysqlMCP.bulkUpdate(
-          (args || {}) as {
-            table_name: string;
-            updates: Array<{
-              data: Record<string, any>;
-              conditions: any[];
-            }>;
-            batch_size?: number;
-          },
-        );
-        break;
-
-      case "bulk_delete":
-        result = await mysqlMCP.bulkDelete(
-          (args || {}) as {
-            table_name: string;
-            condition_sets: any[][];
-            batch_size?: number;
-          },
-        );
-        break;
-
-      case "plan_seed_data":
-        result = await mysqlMCP.planSeedData(args || {});
-        break;
-
-      case "generate_seed_preview":
-        result = await mysqlMCP.generateSeedPreview(args || {});
-        break;
-
-      case "execute_seed_plan":
-        result = await mysqlMCP.executeSeedPlan(args || {});
-        break;
-
-      case "validate_seed_integrity":
-        result = await mysqlMCP.validateSeedIntegrity(args || {});
-        break;
-
-      case "infer_seed_rules":
-        result = await mysqlMCP.inferSeedRules(args || {});
-        break;
-
-      case "seed_from_template":
-        result = await mysqlMCP.seedFromTemplate(args || {});
-        break;
-
-      // Query Tools
-      case "run_select_query":
-        result = await mysqlMCP.runSelectQuery(
-          (args || {}) as {
-            query: string;
-            params?: any[];
-            hints?: any;
-            useCache?: boolean;
-            dry_run?: boolean;
-          },
-        );
-        break;
-
-      case "execute_write_query":
-        result = await mysqlMCP.executeWriteQuery(
-          (args || {}) as { query: string; params?: any[] },
-        );
-        break;
-
-      // DDL Tools
-      case "create_table":
-        result = await mysqlMCP.createTable(args || {});
-        break;
-
-      case "alter_table":
-        result = await mysqlMCP.alterTable(args || {});
-        break;
-
-      case "drop_table":
-        result = await mysqlMCP.dropTable(args || {});
-        break;
-
-      case "execute_ddl":
-        result = await mysqlMCP.executeDdl((args || {}) as { query: string });
-        break;
-
-      case "describe_connection":
-        result = await mysqlMCP.describeConnection();
-        break;
-
-      case "cursor_execute_request":
-        result = await executeCursorRequest();
-        break;
-
-      case "test_connection":
-        result = await mysqlMCP.testConnection();
-        break;
-
-      case "list_all_tools":
-        result = await mysqlMCP.listAllTools(getRuntimeToolCatalog());
-        break;
-
-      case "read_changelog":
-        result = await mysqlMCP.readChangelog(
-          (args || {}) as { version?: string; limit?: number },
-        );
-        break;
-
-      case "get_all_tables_relationships":
-        result = await mysqlMCP.getAllTablesRelationships(
-          (args || {}) as { database?: string },
-        );
-        break;
-
-      // Transaction Tools
-      case "begin_transaction":
-        result = await mysqlMCP.beginTransaction(
-          (args || {}) as { transactionId?: string },
-        );
-        break;
-
-      case "commit_transaction":
-        result = await mysqlMCP.commitTransaction(
-          (args || {}) as { transactionId: string },
-        );
-        break;
-
-      case "rollback_transaction":
-        result = await mysqlMCP.rollbackTransaction(
-          (args || {}) as { transactionId: string },
-        );
-        break;
-
-      case "get_transaction_status":
-        result = await mysqlMCP.getTransactionStatus();
-        break;
-
-      case "execute_in_transaction":
-        result = await mysqlMCP.executeInTransaction(
-          (args || {}) as {
-            transactionId: string;
-            query: string;
-            params?: any[];
-          },
-        );
-        break;
-
-      // Stored Procedure Tools
-      case "list_stored_procedures":
-        result = await mysqlMCP.listStoredProcedures(
-          (args || {}) as { database?: string },
-        );
-        break;
-
-      case "get_stored_procedure_info":
-        result = await mysqlMCP.getStoredProcedureInfo(
-          (args || {}) as { procedure_name: string; database?: string },
-        );
-        break;
-
-      case "execute_stored_procedure":
-        result = await mysqlMCP.executeStoredProcedure(
-          (args || {}) as {
-            procedure_name: string;
-            parameters?: any[];
-            database?: string;
-          },
-        );
-        break;
-
-      case "create_stored_procedure":
-        result = await mysqlMCP.createStoredProcedure((args || {}) as any);
-        break;
-
-      case "drop_stored_procedure":
-        result = await mysqlMCP.dropStoredProcedure(
-          (args || {}) as {
-            procedure_name: string;
-            if_exists?: boolean;
-            database?: string;
-          },
-        );
-        break;
-
-      case "show_create_procedure":
-        result = await mysqlMCP.showCreateProcedure(
-          (args || {}) as { procedure_name: string; database?: string },
-        );
-        break;
-
-      // Data Export Tools
-      case "export_table_to_csv":
-        result = await mysqlMCP.exportTableToCSV((args || {}) as any);
-        break;
-
-      case "export_query_to_csv":
-        result = await mysqlMCP.exportQueryToCSV(
-          (args || {}) as {
-            query: string;
-            params?: any[];
-            include_headers?: boolean;
-          },
-        );
-        break;
-
-      // Query Optimization Tools
-      case "analyze_query":
-        result = mysqlMCP.analyzeQuery((args || {}) as { query: string });
-        break;
-
-      case "get_optimization_hints":
-        result = mysqlMCP.getOptimizationHints(
-          (args || {}) as { goal: "SPEED" | "MEMORY" | "STABILITY" },
-        );
-        break;
-
-      // View Tools
-      case "list_views":
-        result = await mysqlMCP.listViews((args || {}) as any);
-        break;
-      case "get_view_info":
-        result = await mysqlMCP.getViewInfo((args || {}) as any);
-        break;
-      case "create_view":
-        result = await mysqlMCP.createView((args || {}) as any);
-        break;
-      case "alter_view":
-        result = await mysqlMCP.alterView((args || {}) as any);
-        break;
-      case "drop_view":
-        result = await mysqlMCP.dropView((args || {}) as any);
-        break;
-      case "show_create_view":
-        result = await mysqlMCP.showCreateView((args || {}) as any);
-        break;
-
-      // Trigger Tools
-      case "list_triggers":
-        result = await mysqlMCP.listTriggers((args || {}) as any);
-        break;
-      case "get_trigger_info":
-        result = await mysqlMCP.getTriggerInfo((args || {}) as any);
-        break;
-      case "create_trigger":
-        result = await mysqlMCP.createTrigger((args || {}) as any);
-        break;
-      case "drop_trigger":
-        result = await mysqlMCP.dropTrigger((args || {}) as any);
-        break;
-      case "show_create_trigger":
-        result = await mysqlMCP.showCreateTrigger((args || {}) as any);
-        break;
-
-      // Index Tools
-      case "list_indexes":
-        result = await mysqlMCP.listIndexes((args || {}) as any);
-        break;
-      case "get_index_info":
-        result = await mysqlMCP.getIndexInfo((args || {}) as any);
-        break;
-      case "create_index":
-        result = await mysqlMCP.createIndex((args || {}) as any);
-        break;
-      case "drop_index":
-        result = await mysqlMCP.dropIndex((args || {}) as any);
-        break;
-      case "analyze_index":
-        result = await mysqlMCP.analyzeIndex((args || {}) as any);
-        break;
-
-      // Constraint Tools
-      case "list_foreign_keys":
-        result = await mysqlMCP.listForeignKeys((args || {}) as any);
-        break;
-      case "list_constraints":
-        result = await mysqlMCP.listConstraints((args || {}) as any);
-        break;
-      case "add_foreign_key":
-        result = await mysqlMCP.addForeignKey((args || {}) as any);
-        break;
-      case "drop_foreign_key":
-        result = await mysqlMCP.dropForeignKey((args || {}) as any);
-        break;
-      case "add_unique_constraint":
-        result = await mysqlMCP.addUniqueConstraint((args || {}) as any);
-        break;
-      case "drop_constraint":
-        result = await mysqlMCP.dropConstraint((args || {}) as any);
-        break;
-      case "add_check_constraint":
-        result = await mysqlMCP.addCheckConstraint((args || {}) as any);
-        break;
-
-      // Table Maintenance Tools
-      case "analyze_table":
-        result = await mysqlMCP.analyzeTable((args || {}) as any);
-        break;
-      case "optimize_table":
-        result = await mysqlMCP.optimizeTable((args || {}) as any);
-        break;
-      case "check_table":
-        result = await mysqlMCP.checkTable((args || {}) as any);
-        break;
-      case "repair_table":
-        result = await mysqlMCP.repairTable((args || {}) as any);
-        break;
-      case "truncate_table":
-        result = await mysqlMCP.truncateTable((args || {}) as any);
-        break;
-      case "get_table_status":
-        result = await mysqlMCP.getTableStatus((args || {}) as any);
-        break;
-      case "flush_table":
-        result = await mysqlMCP.flushTable((args || {}) as any);
-        break;
-      case "get_table_size":
-        result = await mysqlMCP.getTableSize((args || {}) as any);
-        break;
-
-      case "repair_query":
-        result = await mysqlMCP.repairQuery(
-          (args || {}) as { query: string; error_message?: string },
-        );
-        break;
-
-      case "create_fulltext_index":
-        result = await mysqlMCP.createFulltextIndex(
-          (args || {}) as {
-            table_name: string;
-            columns: string[];
-            index_name?: string;
-            parser?: "ngram" | "mecab";
-            ngram_token_size?: number;
-            database?: string;
-          },
-        );
-        break;
-
-      case "fulltext_search":
-        result = await mysqlMCP.fulltextSearch(
-          (args || {}) as {
-            table_name: string;
-            search_term: string;
-            columns?: string[];
-            mode?:
-              | "natural_language"
-              | "natural_language_with_query_expansion"
-              | "boolean"
-              | "query_expansion";
-            limit?: number;
-            offset?: number;
-            order_by?: string;
-            order_direction?: "ASC" | "DESC";
-            database?: string;
-          },
-        );
-        break;
-
-      case "get_fulltext_info":
-        result = await mysqlMCP.getFulltextInfo(
-          (args || {}) as {
-            table_name: string;
-            index_name?: string;
-            database?: string;
-          },
-        );
-        break;
-
-      case "drop_fulltext_index":
-        result = await mysqlMCP.dropFulltextIndex(
-          (args || {}) as {
-            table_name: string;
-            index_name?: string;
-            database?: string;
-          },
-        );
-        break;
-
-      case "get_fulltext_stats":
-        result = await mysqlMCP.getFulltextStats(
-          (args || {}) as {
-            table_name: string;
-            database?: string;
-          },
-        );
-        break;
-
-      case "optimize_fulltext":
-        result = await mysqlMCP.optimizeFulltext(
-          (args || {}) as {
-            table_name: string;
-            database?: string;
-          },
-        );
-        break;
-
-      default:
-        throw new Error(`Unknown tool: ${name}`);
-    }
+    const result = await invokeTool(name, args || {});
 
     // Handle the result based on status
     if (result.status === "error") {

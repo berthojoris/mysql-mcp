@@ -4,7 +4,7 @@
 
 **A production-ready Model Context Protocol (MCP) server for MySQL database integration with AI agents**
 
-**Last Updated:** 2026-10-22 19:50:16
+**Last Updated:** 2026-10-26 13:35:39
 
 [![npm version](https://img.shields.io/npm/v/@berthojoris/mcp-mysql-server)](https://www.npmjs.com/package/@berthojoris/mcp-mysql-server)
 [![npm downloads](https://img.shields.io/npm/dm/@berthojoris/mcp-mysql-server)](https://www.npmjs.com/package/@berthojoris/mcp-mysql-server)
@@ -270,6 +270,12 @@ Control database access with a **dual-layer filtering system** that provides bot
 | `procedure` | Stored procedures (CREATE/DROP/EXECUTE) | Procedure management |
 | `transaction` | BEGIN, COMMIT, ROLLBACK | ACID operations |
 | `utility` | Connection testing, diagnostics | Troubleshooting |
+
+**Changes in v1.44.0 (review before upgrading):**
+- **Read-only by default**: with no permissions and no categories, the server now enables only `list,read,utility` (previously every tool). To keep full access, pass `list,read,create,update,delete,execute,ddl,utility,transaction,procedure`.
+- **No implicit `mysql` schema**: without a database in the connection string or `DB_NAME`, database-scoped tools report "No database specified" instead of using the `mysql` system schema.
+- **Query cache off by default**: opt in with `CACHE_ENABLED=true`. Any write and every transaction commit now clears the cache.
+- **SQL validation**: `#`, `;`, and `--` inside string values (e.g. `'#fff'`) are no longer rejected. `WITH` (CTE) queries are supported and, like derived tables, need `execute` in read queries.
 
 **Security changes in v1.43.4:**
 - `EXPLAIN ANALYZE` runs the statement it wraps (MySQL 8.0.18+), so it now requires that statement's permission: `delete` for DELETE, `update` or `execute` for UPDATE, `read` for SELECT. Plan-only `EXPLAIN` still needs just `list` or `read`.

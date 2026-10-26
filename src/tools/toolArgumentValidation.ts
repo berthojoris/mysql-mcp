@@ -7,7 +7,7 @@ import {
   validateBulkInsert,
   validateTableName,
   validateValue,
-} from "../validation/inputValidation.js";
+} from "../validation/inputValidation";
 
 const validatePlanSeedDataArgs = (args: any): { valid: boolean; errors?: string[] } => {
   const errors: string[] = [];

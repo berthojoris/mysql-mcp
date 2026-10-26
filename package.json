@@ -1,6 +1,6 @@
 {
   "name": "@berthojoris/mcp-mysql-server",
-  "version": "1.43.5",
+  "version": "1.44.0",
   "description": "Model Context Protocol server for MySQL database integration with dynamic per-project permissions",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,7 +9,8 @@
     "mcp-mysql": "bin/mcp-mysql.js"
   },
   "scripts": {
-    "build": "tsc",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc",
     "start": "node dist/mcp-server.js",
     "dev": "ts-node src/mcp-server.ts",
     "test": "jest --passWithNoTests",
@@ -54,6 +55,13 @@
     "LICENSE",
     "manifest.json"
   ],
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "roots": [
+      "<rootDir>/src"
+    ]
+  },
   "engines": {
     "node": ">=18.0.0"
   },

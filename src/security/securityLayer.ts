@@ -1,6 +1,6 @@
 import Ajv from "ajv";
-import { FeatureConfig, ToolCategory } from "../config/featureConfig.js";
-import { MaskingLayer } from "./maskingLayer.js";
+import { FeatureConfig, ToolCategory } from "../config/featureConfig";
+import { MaskingLayer } from "./maskingLayer";
 
 export class SecurityLayer {
   private ajv: InstanceType<typeof Ajv>;
@@ -238,11 +238,25 @@ export class SecurityLayer {
 
     // Enhanced query type detection with better parsing.
     // EXPLAIN ANALYZE is classified by the inner statement it executes.
-    const queryTypeResult = this.detectQueryType(
-      explainAnalyzeMatch ? explainAnalyzeMatch[1].trim() : cleanQuery,
-    );
+    const statement = explainAnalyzeMatch ? explainAnalyzeMatch[1].trim() : cleanQuery;
+
+    // A WITH clause is authorized as the main statement that follows its CTEs.
+    const mainStatement = this.resolveCteMainStatement(statement);
+    if (mainStatement === null) {
+      return { valid: false, error: "Unable to parse WITH clause. Query type not allowed" };
+    }
+
+    const queryTypeResult = this.detectQueryType(mainStatement);
     if (!queryTypeResult.valid) {
       return queryTypeResult;
+    }
+
+    // CTEs are as expressive as derived tables, which also require execute permission.
+    if (!allowAdvancedQueries && /^WITH\b/.test(statement)) {
+      return {
+        valid: false,
+        error: "Common table expressions (WITH) not allowed without 'execute' permission",
+      };
     }
 
     if (!allowAdvancedQueries) {
@@ -259,9 +273,140 @@ export class SecurityLayer {
   }
 
   /**
+   * Blank out the contents of string literals and quoted identifiers so that
+   * comment, statement-separator, and keyword checks only see SQL syntax.
+   * Strings become '' and identifiers become `` (or their bare content when
+   * keepIdentifiers is set). Returns null when the query cannot be lexed
+   * unambiguously: an unterminated quote, or a backslash inside a literal,
+   * whose meaning depends on the NO_BACKSLASH_ESCAPES sql_mode.
+   */
+  private maskQuotedContent(query: string, keepIdentifiers: boolean = false): string | null {
+    let result = "";
+    let i = 0;
+
+    while (i < query.length) {
+      const quote = query[i];
+      if (quote !== "'" && quote !== '"' && quote !== "`") {
+        result += quote;
+        i++;
+        continue;
+      }
+
+      let content = "";
+      let j = i + 1;
+      let closed = false;
+      while (j < query.length) {
+        if (query[j] === quote) {
+          // A doubled quote is an escaped quote in both sql_modes
+          if (query[j + 1] === quote) {
+            content += quote + quote;
+            j += 2;
+            continue;
+          }
+          closed = true;
+          break;
+        }
+        if (query[j] === "\\" && quote !== "`") {
+          return null;
+        }
+        content += query[j];
+        j++;
+      }
+
+      if (!closed) {
+        return null;
+      }
+
+      if (quote === "`") {
+        result += keepIdentifiers ? content : "``";
+      } else {
+        result += quote + quote;
+      }
+      i = j + 1;
+    }
+
+    return result;
+  }
+
+  /**
+   * Return the main statement that follows the CTE definitions of a WITH
+   * clause, the statement itself when it has no WITH clause, or null when the
+   * WITH clause cannot be parsed.
+   */
+  private resolveCteMainStatement(statement: string): string | null {
+    if (!/^WITH\b/i.test(statement)) {
+      return statement;
+    }
+
+    const masked = this.maskQuotedContent(statement);
+    if (masked === null) {
+      return null;
+    }
+
+    let rest = masked.replace(/^WITH\s+(?:RECURSIVE\s+)?/i, "");
+    while (true) {
+      const nameMatch = rest.match(/^(?:``|[A-Z0-9_$]+)\s*/i);
+      if (!nameMatch) {
+        return null;
+      }
+      rest = rest.slice(nameMatch[0].length);
+
+      // Optional column list
+      if (rest.startsWith("(")) {
+        const end = this.findClosingParen(rest);
+        if (end < 0) {
+          return null;
+        }
+        rest = rest.slice(end + 1).trimStart();
+      }
+
+      const asMatch = rest.match(/^AS\s*/i);
+      if (!asMatch) {
+        return null;
+      }
+      rest = rest.slice(asMatch[0].length);
+
+      if (!rest.startsWith("(")) {
+        return null;
+      }
+      const end = this.findClosingParen(rest);
+      if (end < 0) {
+        return null;
+      }
+      rest = rest.slice(end + 1).trimStart();
+
+      if (!rest.startsWith(",")) {
+        return rest;
+      }
+      rest = rest.slice(1).trimStart();
+    }
+  }
+
+  /**
+   * Index of the parenthesis closing the one at position 0, or -1 if unbalanced.
+   */
+  private findClosingParen(text: string): number {
+    let depth = 0;
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === "(") {
+        depth++;
+      } else if (text[i] === ")") {
+        depth--;
+        if (depth === 0) {
+          return i;
+        }
+      }
+    }
+    return -1;
+  }
+
+  /**
    * Enhanced comment detection to prevent bypass techniques
    */
-  private detectComments(query: string): { valid: boolean; error?: string } {
+  private detectComments(rawQuery: string): { valid: boolean; error?: string } {
+    // Quoted content is data, not syntax; fall back to the raw text if ambiguous
+    const query = this.maskQuotedContent(rawQuery) ?? rawQuery;
+
     // Check for various comment types and bypass attempts
     const commentPatterns = [
       /\/\*[\s\S]*?\*\//g,  // Multi-line comments
@@ -309,9 +454,9 @@ export class SecurityLayer {
    * Enhanced multiple statement detection
    */
   private detectMultipleStatements(query: string): { valid: boolean; error?: string } {
-    // Remove string literals to avoid false positives
-    const queryWithoutStrings = query.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, '');
-    
+    // Remove quoted content to avoid false positives; fall back to the raw text if ambiguous
+    const queryWithoutStrings = this.maskQuotedContent(query) ?? query;
+
     // Check for multiple semicolons not at the end
     const semicolonMatches = queryWithoutStrings.match(/;/g);
     if (semicolonMatches && semicolonMatches.length > 1) {
@@ -319,7 +464,7 @@ export class SecurityLayer {
     }
 
     // Check for semicolon not at the very end (after trimming)
-    const trimmedQuery = query.trim();
+    const trimmedQuery = queryWithoutStrings.trim();
     if (trimmedQuery.includes(';') && !trimmedQuery.endsWith(';')) {
       return { valid: false, error: "Multiple statements not allowed" };
     }
@@ -372,10 +517,10 @@ export class SecurityLayer {
     cleanQuery: string,
     allowAdvancedQueries: boolean,
   ): { valid: boolean; error?: string } {
-    // Remove string literals to avoid false positives
-    const queryWithoutStrings = cleanQuery
-      .replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, '')
-      .replace(/`([^`]*)`/g, "$1");
+    // Remove string literals to avoid false positives, and unwrap quoted
+    // identifiers so `mysql`.`user` is still detected
+    const queryWithoutStrings =
+      this.maskQuotedContent(cleanQuery, true) ?? cleanQuery.replace(/`/g, "");
 
     for (const keyword of this.dangerousKeywords) {
       // Enhanced regex with word boundaries and case insensitivity
@@ -424,8 +569,8 @@ export class SecurityLayer {
    * Enhanced SELECT query validation
    */
   private validateSelectQuery(cleanQuery: string): { valid: boolean; error?: string } {
-    // Remove string literals to avoid false positives
-    const queryWithoutStrings = cleanQuery.replace(/'[^']*'|"[^"]*"/g, '');
+    // Remove quoted content to avoid false positives
+    const queryWithoutStrings = this.maskQuotedContent(cleanQuery) ?? cleanQuery;
 
     // Check for UNION attacks
     if (/\bUNION\b/i.test(queryWithoutStrings)) {

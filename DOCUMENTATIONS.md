@@ -1,7 +1,7 @@
 # MySQL MCP Server - Documentation
 
-**Last Updated:** 2026-10-12 21:16:54
-**Version:** 1.43.5
+**Last Updated:** 2026-10-26 13:35:39
+**Version:** 1.44.0
 **Total Tools:** 88
 
 Comprehensive documentation for the MySQL MCP Server. For quick start, see [README.md](README.md).
@@ -65,6 +65,12 @@ Configure MySQL MCP with two access-control layers:
 }
 ```
 
+### Defaults (v1.44.0, 2026-10-26 13:35:39)
+
+- **Permissions**: when neither permissions nor categories are given, the server starts **read-only** with `list,read,utility`. Earlier versions enabled every tool. To enable everything, pass the full list: `list,read,create,update,delete,execute,ddl,utility,transaction,procedure`.
+- **Database**: when the connection string has no database and `DB_NAME` is unset, no database is selected and database-scoped tools return "No database specified". Earlier versions fell back to the `mysql` system schema.
+- **Query cache**: disabled by default. Set `CACHE_ENABLED=true` to opt in (`CACHE_TTL_MS`, default `60000`; `CACHE_MAX_SIZE`, default `100`). When enabled, any statement that can change data (outside or inside a transaction) and every transaction commit clears the whole cache. Writes made by other clients are not detected, so cached results can lag by up to the TTL.
+
 ---
 
 ### Cursor Compatibility Bridge
@@ -127,6 +133,8 @@ For CSV exports, use `export_table_to_csv` for table-based exports and `export_q
 ```
 Tool enabled = (Has Permission) AND (Has Category OR No categories specified)
 ```
+
+With no permissions and no categories configured, the effective permissions are `list,read,utility` (read-only default since v1.44.0). Categories alone keep all permissions and filter by category.
 
 CSV exports require both `utility` and `read` permissions; their category remains `utilities`.
 
@@ -459,6 +467,8 @@ await mcp.call("commit_transaction", {});
 - **Tool-level**: Each tool requires specific permissions
 - **Execution-time enforcement**: Tool permissions and categories are checked for every call, including file-backed Cursor requests.
 - **Mandatory SQL restrictions**: File access, account/privilege changes, dangerous server operations, comments, and multiple statements remain blocked even with `execute`. Execute permission permits advanced SELECT features, not bypassing these restrictions.
+- **Quoted content (v1.44.0)**: Comment, statement-separator, and keyword checks ignore the contents of string literals and quoted identifiers, so values such as `'#fff'`, `'a;b'`, or `'x -- y'` are accepted. A literal containing a backslash is lexed differently depending on `NO_BACKSLASH_ESCAPES`, so such queries are checked strictly against the raw text.
+- **Common table expressions (v1.44.0)**: `WITH ... SELECT/UPDATE/DELETE` is authorized as its main statement. Like derived tables and UNION, a CTE in a read query requires `execute`. A `WITH` clause that cannot be parsed is rejected.
 
 ### Vulnerability Reporting
 
@@ -466,8 +476,8 @@ Suspected security issues must be reported privately via GitHub Private Vulnerab
 
 ### Data Protection
 
-- **PII Masking**: Automatic sensitive data redaction in exports
 - **Query Validation**: Input validation and SQL injection prevention
+- **No result masking**: Query and export results are returned unmasked. Restrict sensitive columns with database privileges or views.
 
 ### Connection Security
 
@@ -493,6 +503,12 @@ Suspected security issues must be reported privately via GitHub Private Vulnerab
 If your client reports `MCP error -32000: Connection closed`, the server process is usually crashing on startup.
 
 If you see `ReferenceError: exports is not defined in ES module scope` in the server stderr logs, update to **v1.33.2+** (fixes an ESM/CJS mismatch that caused the MCP process to exit immediately).
+
+### Development
+
+- `npm run build` removes `dist/` before compiling, so files deleted from `src/` are never published.
+- `npm run dev` runs `src/mcp-server.ts` with ts-node (fixed in v1.44.0).
+- `npm test` runs the Jest suite in `src/__tests__/` (SQL validator, permission defaults, cache invalidation).
 
 ### Error Messages
 

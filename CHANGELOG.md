@@ -5,6 +5,28 @@ All notable changes to the MySQL MCP Server will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.0] - 2026-10-26
+
+### Changed
+- **Read-only default permissions**: when neither permissions nor categories are configured, the server enables only `list,read,utility` instead of every tool. Configurations that relied on the old default must now list permissions explicitly.
+- **No implicit `mysql` schema**: `DB_NAME` no longer falls back to the `mysql` system schema. Without a configured database, database-scoped tools return "No database specified".
+- **Query cache disabled by default**: opt in with `CACHE_ENABLED=true`.
+- `CallTool` dispatch now resolves tools to their `MySQLMCP` method through the same path as the Cursor bridge, replacing the per-tool `switch`. The server version is read from `package.json`.
+
+### Fixed
+- SQL validation no longer rejects `#`, `;`, `--`, or `/* */` inside string literals and quoted identifiers (e.g. `WHERE color = '#fff'`). Literals containing backslashes still get the strict raw-text check because their meaning depends on `NO_BACKSLASH_ESCAPES`.
+- `WITH` (CTE) queries are classified by their main statement (SELECT/UPDATE/DELETE) instead of being rejected. CTEs in read queries require `execute`, as derived tables do.
+- When the cache is enabled, writes executed inside transactions and transaction commits now clear it, and table-name guessing was replaced by clearing the whole cache on any data-changing statement (covers db-qualified names, multi-table writes, DDL, and `EXPLAIN ANALYZE`).
+- `npm run build` now removes `dist/` first, so the stale `dist/auth/authService.js` (JWT code with a default secret and an undeclared `jsonwebtoken` dependency) is no longer published.
+- `npm run dev` (ts-node) works again: local imports no longer use `.js` suffixes that ts-node could not resolve.
+- Restricted permission profiles no longer log "Unknown tool" warnings for tools mapped only by their snake_case name.
+
+### Added
+- Jest test suite in `src/__tests__/` covering the SQL validator, default permissions, and cache invalidation.
+
+### Removed
+- Unused `next-env.d.ts`. Removed the inaccurate "PII masking in exports" claim from the documentation; results are returned unmasked. The catalog remains at 88 tools.
+
 ## [1.43.5] - 2026-10-12
 
 ### Added

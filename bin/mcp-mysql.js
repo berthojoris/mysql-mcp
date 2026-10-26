@@ -38,7 +38,7 @@ if (!mysqlUrl) {
   );
   console.error("");
   console.error("Examples:");
-  console.error("  # All tools enabled (no filtering)");
+  console.error("  # Read-only default (list,read,utility)");
   console.error("  mcp-mysql mysql://root:pass@localhost:3306/mydb");
   console.error("");
   console.error("  # Permission-based filtering only (Layer 1)");
@@ -82,7 +82,7 @@ if (!mysqlUrl) {
   console.error(
     "  - If permissions + categories: Only tools matching BOTH layers enabled",
   );
-  console.error("  - If nothing specified: All tools enabled");
+  console.error("  - If nothing specified: Read-only default (list,read,utility)");
   process.exit(1);
 }
 
@@ -144,7 +144,7 @@ if (categories) {
 }
 
 if (!permissions && !categories) {
-  console.error("Access Control: All tools enabled (no filtering)");
+  console.error("Access Control: Read-only default (list,read,utility)");
 } else if (permissions && categories) {
   console.error("Filtering Mode: Dual-layer (Permissions + Categories)");
 } else if (permissions && !categories) {

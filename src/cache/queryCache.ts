@@ -39,7 +39,7 @@ export interface CacheConfig {
  * Default cache configuration
  */
 const DEFAULT_CONFIG: CacheConfig = {
-  enabled: true,
+  enabled: false, // Opt in with CACHE_ENABLED=true; writes by other clients are not detected
   ttlMs: 60000, // 1 minute default TTL
   maxSize: 100, // Maximum 100 cached queries
   maxMemoryMB: 50, // Maximum 50MB memory usage

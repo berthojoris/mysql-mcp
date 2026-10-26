@@ -29,7 +29,8 @@ class DatabaseConnection {
       port: dbConfig.port,
       user: dbConfig.user,
       password: dbConfig.password,
-      database: dbConfig.database,
+      // No default schema unless one was configured
+      database: dbConfig.database || undefined,
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
@@ -94,9 +95,7 @@ class DatabaseConnection {
       }
 
       // Invalidate cache for write operations
-      if (!isSelectQuery) {
-        this.invalidateCacheForWriteOperation(sql);
-      }
+      this.invalidateCacheForWriteOperation(sql);
 
       return results as T;
     } catch (error: any) {
@@ -107,24 +106,23 @@ class DatabaseConnection {
   }
 
   /**
-   * Invalidate cache entries when write operations occur
+   * Whether a statement cannot change data seen by cached SELECTs.
+   * EXPLAIN/DESCRIBE ANALYZE executes the wrapped statement, so it is excluded.
+   */
+  public static isReadOnlyStatement(sql: string): boolean {
+    return /^(?:SELECT|SHOW)\b|^(?:EXPLAIN|DESCRIBE|DESC)\b(?!\s+ANALYZE\b)/i.test(
+      sql.trim(),
+    );
+  }
+
+  /**
+   * Clear the whole cache when a statement may have changed data. Writes can
+   * touch tables that are hard to extract reliably (multi-table UPDATE/DELETE,
+   * db-qualified names, DDL, procedures), so no table-level guessing is done.
    */
   private invalidateCacheForWriteOperation(sql: string): void {
-    // Extract table name from INSERT, UPDATE, DELETE statements
-    const insertMatch = sql.match(/INSERT\s+INTO\s+[\`"']?(\w+)[\`"']?/i);
-    const updateMatch = sql.match(/UPDATE\s+[\`"']?(\w+)[\`"']?/i);
-    const deleteMatch = sql.match(/DELETE\s+FROM\s+[\`"']?(\w+)[\`"']?/i);
-    const truncateMatch = sql.match(
-      /TRUNCATE\s+(?:TABLE\s+)?[\`"']?(\w+)[\`"']?/i,
-    );
-    const dropMatch = sql.match(
-      /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?[\`"']?(\w+)[\`"']?/i,
-    );
-
-    const match =
-      insertMatch || updateMatch || deleteMatch || truncateMatch || dropMatch;
-    if (match && match[1]) {
-      this.queryCache.invalidateTable(match[1]);
+    if (!DatabaseConnection.isReadOnlyStatement(sql)) {
+      this.queryCache.clear();
     }
   }
 
@@ -361,6 +359,9 @@ class DatabaseConnection {
       await transaction.connection.commit();
       transaction.connection.release();
       this.activeTransactions.delete(transactionId);
+
+      // Reads cached while the transaction was open predate its committed writes
+      this.queryCache.clear();
     } catch (error) {
       // If commit fails, rollback and release connection
       try {
@@ -503,6 +504,9 @@ class DatabaseConnection {
       const [results] = await transaction.connection.query(sql, params);
       const duration = Date.now() - startTime;
       QueryLogger.log(sql, params, duration, "success");
+
+      // DDL commits implicitly, so its effects are visible before COMMIT
+      this.invalidateCacheForWriteOperation(sql);
 
       // Reset timeout on successful activity and update last activity
       this.resetTransactionTimeout(transactionId);

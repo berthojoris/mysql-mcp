@@ -397,6 +397,12 @@ const legacyToDocCategoryMap: Record<string, DocCategory[]> = {
 };
 
 /**
+ * Permissions used when neither permissions nor categories are configured.
+ * Read-only by default; write and schema access must be granted explicitly.
+ */
+export const DEFAULT_PERMISSIONS = "list,read,utility";
+
+/**
  * Class to manage feature configuration based on runtime or environment variables
  * Supports dual-layer filtering:
  * - Layer 1 (Permissions): Legacy categories (broad control)
@@ -453,12 +459,9 @@ export class FeatureConfig {
     legacy: Set<ToolCategory>;
     doc: Set<DocCategory>;
   } {
-    // If both are empty, enable all features
+    // If both are empty, fall back to the read-only default permissions
     if (!permissionsStr.trim() && !categoriesStr.trim()) {
-      return {
-        legacy: new Set(Object.values(ToolCategory)),
-        doc: new Set(Object.values(DocCategory)),
-      };
+      permissionsStr = DEFAULT_PERMISSIONS;
     }
 
     // Parse Layer 1: Permissions (legacy categories)
@@ -581,14 +584,6 @@ export class FeatureConfig {
       );
     }
 
-    const isAllEnabled =
-      !this.originalPermissionsString.trim() &&
-      !this.originalCategoriesString.trim();
-
-    if (isAllEnabled) {
-      return `Unknown error: All tools should be enabled but '${toolName}' was blocked.`;
-    }
-
     // Build error message based on dual-layer or single-layer mode
     if (this.useDualLayer) {
       const hasPermission = legacyCategory
@@ -697,7 +692,9 @@ export class FeatureConfig {
     enabledDoc: DocCategory[];
   } {
     return {
-      permissions: this.originalPermissionsString || "all",
+      permissions:
+        this.originalPermissionsString ||
+        (this.originalCategoriesString ? "all" : DEFAULT_PERMISSIONS),
       categories:
         this.originalCategoriesString ||
         (this.useDualLayer ? "" : "derived from permissions"),
@@ -715,7 +712,7 @@ export class FeatureConfig {
       !this.originalPermissionsString.trim() &&
       !this.originalCategoriesString.trim()
     ) {
-      return "No filtering (all tools enabled)";
+      return `Default read-only (${DEFAULT_PERMISSIONS})`;
     }
     if (this.useDualLayer) {
       return "Dual-layer (Permissions + Categories)";
